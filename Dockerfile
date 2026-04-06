@@ -22,5 +22,5 @@ RUN install2.r \
 # Install mcptools separately (has complex dependencies)
 RUN R -e 'install.packages("mcptools", type = "source")'
 
-COPY mcp_server.R /mcp_server.R
+COPY server.R /server.R
 COPY data/ /data/

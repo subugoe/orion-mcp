@@ -18,7 +18,7 @@ services:
     build: .
     volumes:
       - ~/.config/gcloud:/root/.config/gcloud:ro
-    command: ["Rscript", "/mcp_server.R"]
+    command: ["Rscript", "/server.R"]
     stdin_open: true   # needed for stdio MCP transport
     tty: false
     environment:
