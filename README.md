@@ -2,13 +2,11 @@
 
 Connects Claude Desktop to the [ORION-DBs](https://orion-dbs.community/) collection on Google BigQuery, so you can explore open research information datasets (OpenAlex, Crossref, ORCID, DataCite, and more) by asking questions in plain language.
 
-## What it does?
+## What it does
 
 Claude can list datasets, inspect table schemas, estimate query costs, and run SQL queries.
 
-### Available MCP Functions
-
-| Function | Description | GC Account Required |
+| Function | Description | GCP Account Required |
 |----------|-------------|---------------------|
 | `orion_list_datasets` | List all available datasets in ORION-DBs | ❌ No |
 | `orion_list_tables` | Display all tables in a specific dataset | ❌ No |
@@ -16,71 +14,93 @@ Claude can list datasets, inspect table schemas, estimate query costs, and run S
 | `orion_estimate_query_cost` | Estimate bytes scanned (and cost) before running a query | ✅ Yes |
 | `orion_run_bq_query` | Execute a SQL query against BigQuery | ✅ Yes |
 
-## How it authenticates?
+## Security
 
-The MCP server runs in a Docker container and authenticates via Application Default Credentials (ADC): No service account keys to create or share. Your local `gcloud` credentials are used directly, so there's no risk of accidentally leaking tokens.
+**Does this give Claude access to my files?**
+No. The MCP server runs in an isolated Docker container with no access to your filesystem. The only thing shared with the container is your Google Cloud credentials directory (`~/.config/gcloud`), mounted read-only so the server can authenticate to BigQuery.
 
-## Prerequisites
+**Can Claude read my private BigQuery datasets?**
+Only if you tell it their names — Claude has no way to enumerate your private datasets. Note that accessing a private dataset requires both the right OAuth scope *and* the `roles/bigquery.dataViewer` IAM role on that dataset. The installer sets up credentials with the `bigquery.readonly` scope, which is the minimum needed to run queries. For your own GCP projects, your account likely already has the necessary IAM role, so if Claude were given a private dataset name it could query it. The practical protection is that Claude only knows what you tell it.
 
-- Docker installed and running
-  - **macOS**: [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-  - **Linux**: `docker` and `docker-compose` (via your package manager, e.g., `apt`, `dnf`)
-- [Claude Desktop](https://claude.ai/download) installed
-- A Google account with access to BigQuery (a free [Google Cloud account](https://cloud.google.com/free) is sufficient — you get 1 TB of free queries per month)
-- [Google Cloud CLI (`gcloud`)](https://cloud.google.com/sdk/docs/install) installed
+**Can it run up a big BigQuery bill without me knowing?**
+No. Every query is preceded by a free dry-run that estimates the cost. Claude is instructed to present the estimate and wait for your explicit confirmation before executing. `SELECT *` queries are blocked entirely.
 
-## Installation
+**Do query results leave my machine?**
+Results appear in your Claude conversation — the same as anything else you discuss with Claude. They are not sent anywhere else.
 
-### 1. Authenticate with Google Cloud
+## Quick start
 
-```bash
-gcloud auth application-default login
-```
+**Prerequisites:** [Docker Desktop](https://www.docker.com/products/docker-desktop/), [Claude Desktop](https://claude.ai/download), [gcloud CLI](https://cloud.google.com/sdk/docs/install)
 
-This opens a browser window. Credentials are stored in `~/.config/gcloud/` — you only need to do this once.
-
-### 2. Find your BigQuery billing project
-
-You need a GCP project ID to bill queries against (queries within the free tier cost nothing). Find it in the [Google Cloud Console](https://console.cloud.google.com/) — it looks like `my-project-123456`.
-
-### 3. Build the Docker image
+**1. Authenticate with Google Cloud**
 
 ```bash
-git clone <this-repo>
-cd orion-mcp
-docker build -t orion-mcp_mcp .
+gcloud auth application-default login \
+  --scopes=https://www.googleapis.com/auth/bigquery.readonly
 ```
 
-This takes a few minutes the first time while R packages are installed.
+This opens a browser window and stores credentials in `~/.config/gcloud/`. You only need to do this once. The `bigquery.readonly` scope limits access to read-only BigQuery operations.
 
-### 4. Add the server to Claude Desktop
+**2. Run the installer**
 
-#### macOS
+```bash
+curl -fsSL https://raw.githubusercontent.com/orion-dbs-community/orion-mcp/main/install.sh | bash
+```
 
-Open `~/Library/Application Support/Claude/claude_desktop_config.json` and add the `orion-dbs` entry inside `mcpServers`:
+Or, if you have already cloned the repo:
+
+```bash
+./install.sh
+```
+
+The installer will:
+- Check Docker and gcloud are available
+- Pull the pre-built Docker image
+- Ask for your GCP billing project ID (needed to run queries; leave blank to skip)
+- Write the MCP server entry into your Claude Desktop config
+
+**3. Restart Claude Desktop**
+
+Quit and reopen Claude Desktop. You should see **orion-dbs** listed under Settings → Developer → MCP Servers.
+
+<details>
+<summary>Manual setup (advanced / Windows)</summary>
+
+### 1. Authenticate
+
+```bash
+gcloud auth application-default login \
+  --scopes=https://www.googleapis.com/auth/bigquery.readonly
+```
+
+### 2. Pull the image
+
+```bash
+docker pull ghcr.io/orion-dbs-community/orion-mcp:latest
+```
+
+### 3. Edit Claude Desktop config
+
+#### macOS — `~/Library/Application Support/Claude/claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
     "orion-dbs": {
-      "command": "/usr/local/bin/docker",
+      "command": "docker",
       "args": [
         "run", "--rm", "-i",
         "-v", "/Users/YOUR_USERNAME/.config/gcloud:/root/.config/gcloud:ro",
         "-e", "SCHEMA_DIR=/data",
         "-e", "BQ_BILLING_PROJECT=YOUR_PROJECT_ID",
-        "orion-mcp_mcp"
+        "ghcr.io/orion-dbs-community/orion-mcp:latest"
       ]
     }
   }
 }
 ```
 
-Replace `YOUR_USERNAME` with your macOS username and `YOUR_PROJECT_ID` with your GCP project ID.
-
-#### Linux
-
-Open `~/.config/Claude/claude_desktop_config.json` and add the `orion-dbs` entry inside `mcpServers`:
+#### Linux — `~/.config/Claude/claude_desktop_config.json`
 
 ```json
 {
@@ -92,44 +112,58 @@ Open `~/.config/Claude/claude_desktop_config.json` and add the `orion-dbs` entry
         "-v", "/home/YOUR_USERNAME/.config/gcloud:/root/.config/gcloud:ro",
         "-e", "SCHEMA_DIR=/data",
         "-e", "BQ_BILLING_PROJECT=YOUR_PROJECT_ID",
-        "orion-mcp_mcp"
+        "ghcr.io/orion-dbs-community/orion-mcp:latest"
       ]
     }
   }
 }
 ```
 
-Replace `YOUR_USERNAME` with your Linux username and `YOUR_PROJECT_ID` with your GCP project ID.
+Replace `YOUR_USERNAME` with your username and `YOUR_PROJECT_ID` with your GCP project ID.
 
-### 5. Restart Claude Desktop
+### 4. Restart Claude Desktop
 
-Quit and reopen Claude Desktop. You should see **orion-dbs** listed under Settings > Developer > MCP Servers.
+</details>
 
 ## Usage
 
 Ask Claude in plain language:
 
-**No Google Cloud account required** — These queries access local schema information:
+**No Google Cloud account required**
 - *"What datasets are available in ORION-DBs?"*
 - *"Show me the schema for the Crossref works table."*
-- *"Which versions of OpenAlex are available and how do schemas compare?"*
+- *"Which versions of OpenAlex are available and how do the schemas compare?"*
 
-**Google Cloud account required** — These queries run SQL against BigQuery:
-- *"How many publications were published by University of Göttingen researchers including University Medical Center between 2021-2025 in journals?"*
+**Google Cloud account required**
+- *"How many publications were published by University of Göttingen researchers between 2021 and 2025 in journals?"*
 - *"How many open access articles were published in 2023, broken down by OA type?"*
 
 ## Cost and safety
 
 BigQuery bills by bytes scanned (not rows returned). Two safeguards are built in:
 
-- **Dry-run before every query** — Claude always calls `orion_estimate_query_cost` first and reports how many GB the query will scan.
-- **No `SELECT *`** — queries that select all columns are blocked. Claude names only the columns it needs, which is the main lever for controlling cost.
+- **Dry-run before every query** — Claude always calls `orion_estimate_query_cost` first and reports how many GB the query will scan. It will not proceed without your explicit confirmation.
+- **No `SELECT *`** — queries that select all columns are blocked. Naming only the columns needed is the main lever for controlling cost.
 
 The [BigQuery sandbox](https://cloud.google.com/bigquery/docs/sandbox) gives every account 1 TB of free queries per month.
 
-## Rebuilding after updates
+## How authentication works
 
-If you pull new changes, rebuild the image before restarting Claude Desktop:
+The MCP server runs in a Docker container and authenticates via Application Default Credentials (ADC): your local `gcloud` credentials are mounted read-only into the container. No service account keys are created or shared.
+
+## Contributing / local development
+
+To build the image locally instead of pulling from the registry:
+
+```bash
+git clone https://github.com/orion-dbs-community/orion-mcp
+cd orion-mcp
+docker build -t orion-mcp_mcp .
+```
+
+Then update the image name in your Claude Desktop config to `orion-mcp_mcp`.
+
+If you pull new changes, rebuild before restarting Claude Desktop:
 
 ```bash
 docker build -t orion-mcp_mcp .

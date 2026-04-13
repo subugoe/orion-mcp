@@ -13,9 +13,7 @@ EXPORT_DIR  <- Sys.getenv("EXPORT_DIR", "/data/exports")
 # Use application default credentials (gcloud ADC mounted in Docker).
 # Suppresses interactive OAuth prompts in non-interactive containers.
 bq_auth(token = gargle::credentials_app_default(
-  scopes = c(
-    "https://www.googleapis.com/auth/bigquery"
-  )
+  scopes = "https://www.googleapis.com/auth/bigquery.readonly"
 ))
 
 read_jsonl <- function(path) {
