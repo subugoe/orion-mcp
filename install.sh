@@ -65,8 +65,12 @@ fi
 
 # ── 5. Billing project ─────────────────────────────────────────────────────────
 echo ""
-echo "A GCP billing project is required to run SQL queries (dataset browsing works without one)."
-echo "You can find your project ID at https://console.cloud.google.com/"
+echo "To run SQL queries, Claude needs a GCP project to bill query costs against."
+echo "(Dataset browsing works without one. The BigQuery free tier gives 1 TB/month at no cost.)"
+echo ""
+echo "  Find your project ID at https://console.cloud.google.com/ — it looks like 'my-project-123456'."
+echo "  It will be passed to the Docker container as an environment variable (BQ_BILLING_PROJECT)."
+echo "  You can re-run this script at any time to add or change it."
 echo ""
 read -r -p "Enter your GCP billing project ID (leave blank to skip): " BQ_PROJECT
 BQ_PROJECT="${BQ_PROJECT:-}"
@@ -133,6 +137,15 @@ success "Config written to: $CONFIG_FILE"
 # ── 9. Done ────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}${BOLD}Installation complete!${RESET}"
+echo ""
+echo "  Summary of what was configured:"
+echo "    Docker image : $IMAGE"
+echo "    gcloud mount : $GCLOUD_MOUNT (read-only)"
+if [ -n "$BQ_PROJECT" ]; then
+  echo "    Billing project : $BQ_PROJECT"
+else
+  echo "    Billing project : (not set — schema browsing only)"
+fi
 echo ""
 echo "  Next step: quit and reopen Claude Desktop."
 echo "  Then check Settings → Developer → MCP Servers — you should see 'orion-dbs'."
