@@ -151,6 +151,32 @@ orion_export_bq_query <- function(sql, filename = NULL) {
   ) |> toJSON(auto_unbox = TRUE, pretty = TRUE)
 }
 
+# Silence "Method not found" for prompts/list and resources/list.
+# mcptools declares these capabilities but doesn't implement the handlers.
+# Remove once https://github.com/posit-dev/mcptools/issues/59 is fixed.
+local({
+  orig <- mcptools:::handle_message_from_client
+  assignInNamespace(
+    "handle_message_from_client",
+    function(line) {
+      msg <- tryCatch(jsonlite::parse_json(line), error = function(e) NULL)
+      result <- if (!is.null(msg$method)) {
+        switch(msg$method,
+          "prompts/list"   = list(prompts = list()),
+          "resources/list" = list(resources = list()),
+          NULL
+        )
+      }
+      if (!is.null(result)) {
+        mcptools:::cat_json(list(jsonrpc = "2.0", id = msg$id, result = result))
+        return(invisible(NULL))
+      }
+      orig(line)
+    },
+    ns = "mcptools"
+  )
+})
+
 mcp_server(
   tools = list(
     tool(
