@@ -1,25 +1,17 @@
 FROM rocker/tidyverse:4.5.3
-RUN echo 'options(repos = c(CRAN = "https://packagemanager.posit.co/cran/__linux__/jammy/latest"))' >> /usr/local/lib/R/etc/Rprofile.site
 
-# Additional system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    cmake \
-    curl \
-    jq \
-    libmbedtls-dev \
-    libzmq3-dev \
-    libsodium-dev \
+# Add r2u binary package repo
+RUN wget -q -O /etc/apt/trusted.gpg.d/cranapt_key.asc \
+    https://r2u.stat.illinois.edu/ubuntu/KEY.gpg && \
+    echo "deb [arch=amd64,arm64] https://r2u.stat.illinois.edu/ubuntu jammy main" \
+    > /etc/apt/sources.list.d/cranapt.list && \
+    apt-get update
+
+# Now install R packages as binaries via apt
+RUN apt-get install -y --no-install-recommends \
+    r-cran-bigrquery r-cran-gargle r-cran-dbi \
+    r-cran-dbplyr r-cran-jsonlite r-cran-ellmer \
     && rm -rf /var/lib/apt/lists/*
-
-# Install R packages
-RUN install2.r \
-    bigrquery \
-    gargle \
-    DBI \
-    dbplyr \
-    jsonlite \
-    ellmer
 
 # Install mcptools separately (has complex dependencies)
 RUN R -e 'install.packages("mcptools", type = "source")'
