@@ -1,11 +1,9 @@
 # ORION-DBs MCP Server
 
-`orion-mcp` is a [Model Context Protocol (MCP) server](https://modelcontextprotocol.io/docs/getting-started/intro) that lets you query the [ORION-DBs](https://orion-dbs.community/) collections on Google BigQuery using natural language. 
-It supports OpenAlex, Crossref, ORCID, DataCite, and more.
+`orion-mcp` is a [Model Context Protocol (MCP) server](https://modelcontextprotocol.io/docs/getting-started/intro) that lets you query the [ORION-DBs](https://orion-dbs.community/) collections on Google BigQuery using an LLM. It supports OpenAlex, Crossref, ORCID, DataCite, and more. 
+It is one example of how MCP servers can be used in research and library workflows. Aaron Tay's gives broader context about the [potential of generic LLM in combination with academic MCP server](https://aarontay.substack.com/p/creating-your-own-research-assistant).
 
-This implementation is experimental. Please feel free to contribute via GitHub issues.
-
-Aaron Tay's [Creating your own research assistant with Claude](https://aarontay.substack.com/p/creating-your-own-research-assistant) gives a good overview of how Claude Desktop and MCP servers can support research and library workflows. `orion-mcp` is a specific implementation focused on open research information.
+`orion-mcp` is an early, experimental implementation focused on open research information. Contributions and feedback are welcome via GitHub issues.
 
 ## How it works
 
@@ -136,4 +134,4 @@ If Claude misunderstands your question, produces unexpected results, or queries 
 
 ## Contact
 
-Najko Jahn (najko.jahn@sub.uni-goettingen.de)
+Najko Jahn (najko.jahn@sub.uni-goettingen.de), Göttingen State and University Library.
