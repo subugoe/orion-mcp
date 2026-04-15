@@ -32,7 +32,7 @@ This opens a browser window and saves credentials to `~/.config/gcloud/`. You on
 Make sure Docker Desktop is open and running, then download the server image:
 
 ```bash
-docker pull ghcr.io/orion-dbs-community/orion-mcp:latest
+docker pull ghcr.io/subugoe/orion-mcp:latest
 ```
 
 ### 3. Add the server to Claude Desktop
@@ -58,7 +58,7 @@ Add the `orion-dbs` entry inside `mcpServers`. If the file already contains othe
         "run", "--rm", "-i",
         "-v", "/Users/YOUR_USERNAME/.config/gcloud:/root/.config/gcloud:ro",
         "-e", "BQ_BILLING_PROJECT=YOUR_PROJECT_ID",
-        "ghcr.io/orion-dbs-community/orion-mcp:latest"
+        "ghcr.io/subugoe/orion-mcp:latest"
       ]
     }
   }
@@ -87,7 +87,7 @@ When you ask Claude to export query results, files are written to `/data/exports
         "-v", "/Users/YOUR_USERNAME/.config/gcloud:/root/.config/gcloud:ro",
         "-v", "/Users/YOUR_USERNAME/Downloads/orion-exports:/data/exports",
         "-e", "BQ_BILLING_PROJECT=YOUR_PROJECT_ID",
-        "ghcr.io/orion-dbs-community/orion-mcp:latest"
+        "ghcr.io/subugoe/orion-mcp:latest"
       ]
     }
   }
@@ -121,7 +121,7 @@ Ask Claude in plain language:
 To build the image locally instead of pulling from the registry:
 
 ```bash
-git clone https://github.com/orion-dbs-community/orion-mcp
+git clone https://github.com/subugoe/orion-mcp
 cd orion-mcp
 docker build -t orion-mcp_mcp .
 ```
