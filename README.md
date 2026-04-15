@@ -1,14 +1,15 @@
 # ORION-DBs MCP Server
 
-`orion-mcp` is a [Model Context Protocol (MCP) server](https://modelcontextprotocol.io/docs/getting-started/intro) that lets you query the [ORION-DBs](https://orion-dbs.community/) collections on Google BigQuery using natural language. They support OpenAlex, Crossref, ORCID, DataCite, and more.
+`orion-mcp` is a [Model Context Protocol (MCP) server](https://modelcontextprotocol.io/docs/getting-started/intro) that lets you query the [ORION-DBs](https://orion-dbs.community/) collections on Google BigQuery using natural language. 
+It supports OpenAlex, Crossref, ORCID, DataCite, and more.
 
 This implementation is experimental. Please feel free to contribute via GitHub issues.
 
-Aaron Tay's [Creating your own research assistant with Claude](https://aarontay.substack.com/p/creating-your-own-research-assistant) gives a good overview of how Claude Desktop and MCP servers can support research and library workflows. `orion-mcp` is a specific implementation focused on open research information databases.
+Aaron Tay's [Creating your own research assistant with Claude](https://aarontay.substack.com/p/creating-your-own-research-assistant) gives a good overview of how Claude Desktop and MCP servers can support research and library workflows. `orion-mcp` is a specific implementation focused on open research information.
 
 ## How it works
 
-`orion-mcp` loads ORION-DBs schema metadata (column names, types, and descriptions) into the LLM context. When you ask a question, the LLM writes a BigQuery SQL query, runs a free dry run to estimate cost, and executes it after your confirmation. Results can be downloaded and analysed locally.
+`orion-mcp` loads ORION-DBs schema metadata (column names, types, and descriptions) into the LLM context. When you ask a question, the LLM writes a BigQuery SQL query, estimates how many GB it will scan, and asks for your confirmation before running it. Queries that select all columns (`SELECT *`) are blocked. Naming only the columns you need keeps queries fast and costs low. Results can be downloaded and analysed locally.
 
 The tool does not send raw data to the LLM provider; it only shares SQL queries. The MCP server runs in an isolated Docker container with no access to your file system. The only information passed to the container is your Google Cloud credentials, used to authenticate with BigQuery via Application Default Credentials (ADC).
 
@@ -72,6 +73,8 @@ Replace:
 
 > Schema browsing (`orion_list_datasets`, `orion_list_tables`, `orion_get_db_schema`) works without a billing project. You can omit the `BQ_BILLING_PROJECT` line entirely if you only want to explore schemas.
 
+BigQuery bills by bytes scanned, not rows returned. The [BigQuery sandbox](https://cloud.google.com/bigquery/docs/sandbox) gives every account 1 TB of free query processing per month.
+
 #### Accessing exported files
 
 When you ask Claude to export query results, files are written to `/data/exports` **inside the container**. To access them on your machine, add a volume mount:
@@ -114,15 +117,6 @@ Ask Claude in plain language:
 - *"How many publications were published by University of Göttingen researchers between 2021 and 2025 in journals?"*
 - *"How many open access articles were published in 2023, broken down by OA type?"*
 
-## Cost and safety
-
-BigQuery bills by bytes scanned (not rows returned). Two safeguards are built in:
-
-- **Dry-run before every query** — Claude always calls `orion_estimate_query_cost` first and reports how many GB the query will scan. It will not proceed without your explicit confirmation.
-- **No `SELECT *`** — queries that select all columns are blocked. Naming only the columns needed is the main lever for controlling cost.
-
-The [BigQuery sandbox](https://cloud.google.com/bigquery/docs/sandbox) gives every account 1 TB of free queries per month.
-
 
 ## Contributing / local development
 
@@ -135,6 +129,10 @@ docker build -t orion-mcp_mcp .
 ```
 
 Then use `orion-mcp_mcp` as the image name in your Claude Desktop config.
+
+The server is implemented in R using the [ellmer](https://ellmer.tidyverse.org/) and [mcptools](https://github.com/posit-dev/mcptools) packages. Contributions and bug reports are welcome via GitHub issues.
+
+If Claude misunderstands your question, produces unexpected results, or queries the wrong dataset, please open a GitHub issue describing what you asked and what happened. That kind of feedback is just as valuable as code contributions, becausez it helps improve the tool descriptions that guide the LLM.
 
 ## Contact
 
