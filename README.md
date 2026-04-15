@@ -1,4 +1,4 @@
-# ORION-DBs MCP Server
+# orion-mcp: MCP Server for open research information provided by the ORION-DBs collective.
 
 `orion-mcp` is a [Model Context Protocol (MCP) server](https://modelcontextprotocol.io/docs/getting-started/intro) that lets you query the [ORION-DBs](https://orion-dbs.community/) collections on Google BigQuery using an LLM. It supports OpenAlex, Crossref, ORCID, DataCite, and more. 
 It is one example of how MCP servers can support work using open research information. Aaron Tay's gives broader context about the [potential of generic LLM in combination with academic MCP server](https://aarontay.substack.com/p/creating-your-own-research-assistant).
