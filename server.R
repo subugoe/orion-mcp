@@ -113,8 +113,16 @@ orion_estimate_query_cost <- function(query) {
 orion_run_bq_query <- function(query) {
   result <- .execute_bq_query(query)
 
-  if (nrow(result) > 1000) {
-    paste(capture.output(print(result)), collapse = "\n")
+  is_nested <- any(purrr::map_lgl(result, is.list))
+
+  if (is_nested) {
+    paste(
+      purrr::map_chr(
+        seq_len(nrow(result)),
+        \(i) toJSON(as.list(result[i, ]), auto_unbox = TRUE)
+      ),
+      collapse = "\n"
+    )
   } else {
     toJSON(result, auto_unbox = TRUE, pretty = TRUE)
   }
@@ -236,11 +244,22 @@ mcp_server(
     tool(
       orion_run_bq_query,
       paste(
-        "STEP 5 OF QUERY WORKFLOW: Execute a BigQuery SQL query and return results.",
-        "PREREQUISITE: orion_estimate_query_cost MUST have been called for this exact SQL",
-        "AND the user must have explicitly confirmed they want to proceed after seeing the cost.",
-        "Never skip the cost confirmation step, even for seemingly small queries.",
-        "Takes exactly one argument — query — which must be the complete, fully-qualified SQL string.",
+        "STEP 5 OF QUERY WORKFLOW: Execute a BigQuery SQL query,",
+        "return results, and summarise them in plain language.",
+        "PREREQUISITE: orion_estimate_query_cost MUST have been called",
+        "for this exact SQL AND the user must have explicitly confirmed",
+        "they want to proceed after seeing the cost.",
+        "Never skip the cost confirmation step, even for small queries.",
+        "Takes exactly one argument — query — which must be the",
+        "complete, fully-qualified SQL string.",
+        "After receiving results, ALWAYS provide a concise",
+        "natural-language summary of the key findings.",
+        "If the result contains more than 100 rows, ask the user:",
+        "'The results contain X rows.",
+        "Would you like me to export them to a file?'",
+        "If the user confirms, call orion_export_bq_query with the",
+        "identical SQL — BigQuery caches results for 24 hours so",
+        "the export will cost nothing.",
         "SQL rules:",
         "- Never use SELECT * — name only the columns needed to minimise bytes scanned.",
         "- Never use COUNT(*) — always count distinct over a unique identifier (e.g. COUNT(DISTINCT doi)).",
