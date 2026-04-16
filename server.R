@@ -76,10 +76,15 @@ orion_estimate_query_cost <- function(query) {
     bytes_processed = bytes,
     gb_processed = gb,
     cost_usd_estimate = round(bytes / 1e12 * 6.25, 4),
+    canonical_sql = normalize_sql(query),
     message = glue::glue(
       "This query will scan {gb} GB (estimated cost: ${round(bytes / 1e12 * 6.25, 4)}).",
       " Monthly free tier usage is unknown — do not assume the query is free.",
-      " ALWAYS ask the user: 'Shall I run this query?' and wait for explicit confirmation before proceeding."
+      " ALWAYS ask the user: 'Shall I run this query?'",
+      " and wait for explicit confirmation before proceeding.",
+      " If confirmed, pass canonical_sql verbatim",
+      " to orion_run_bq_query or orion_export_bq_query.",
+      " Do NOT modify, reformat, or re-derive the SQL."
     )
   ) |> toJSON(auto_unbox = TRUE, pretty = TRUE)
 }
