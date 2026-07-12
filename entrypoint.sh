@@ -23,4 +23,5 @@ else
   echo "Schema refresh complete." >&2
 fi
 
-exec Rscript /server.R
+cd /app
+exec Rscript server.R

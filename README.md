@@ -108,6 +108,11 @@ Quit and reopen Claude Desktop. You should see **orion-dbs** listed under **Sett
 
 Ask Claude in plain language:
 
+### Check your setup
+- *"Is orion-dbs working? Check my setup."*
+
+This runs a free end-to-end health check (schema metadata, credentials, billing project, BigQuery connectivity, export folder mount) and walks you through fixing anything that is missing. Run it once after installation, or whenever queries fail unexpectedly.
+
 ### No Google Cloud account required
 - *"What datasets are available in ORION-DBs?"*
 - *"Show me the schema for the Crossref works table."*
@@ -134,6 +139,14 @@ docker build -t orion-mcp_mcp .
 ```
 
 Then use `orion-mcp_mcp` as the image name in your Claude Desktop config.
+
+The server logic lives in `R/functions.R`; `server.R` handles authentication and registers the MCP tools. Run the unit tests from the repo root before opening a pull request:
+
+```bash
+Rscript tests/test-functions.R
+```
+
+The same tests run in CI on every pull request and gate the image build, so a regression cannot reach the published image. They cover everything except the BigQuery round-trip itself, which the built-in health check (*"check my setup"*) verifies at install time.
 
 The server is implemented in R using the [ellmer](https://ellmer.tidyverse.org/) and [mcptools](https://github.com/posit-dev/mcptools) packages. Contributions and bug reports are welcome via GitHub issues.
 
