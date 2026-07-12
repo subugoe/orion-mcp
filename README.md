@@ -7,7 +7,9 @@ Contributions and feedback are welcome via GitHub issues.
 
 ## How it works
 
-`orion-mcp` loads ORION-DBs schema metadata (column names, types, and descriptions) into the LLM context. When you ask a question, the LLM writes a BigQuery SQL query, estimates how many GB it will scan, and asks for your confirmation before running it. Queries that select all columns (`SELECT *`) are blocked. Naming only the columns you need keeps queries fast and costs low. Results can be downloaded and analysed locally.
+`orion-mcp` loads ORION-DBs schema metadata (column names, types, and descriptions) into the LLM context. When you ask a question, the LLM writes a BigQuery SQL query, shows it to you together with an estimate of how many GB it will scan, and asks for your confirmation before running it. Queries that select all columns (`SELECT *`) are blocked. Naming only the columns you need keeps queries fast and costs low. Results can be downloaded and analysed locally.
+
+Query results of any size are kept **in the local R session** (named `q1`, `q2`, ...) — only a size-capped preview is sent to the LLM, so large results never overflow the conversation. The LLM can then analyse the full result by reference using built-in tools (`orion_result_summary`, `orion_result_count`, `orion_result_slice`) without re-querying BigQuery, or export it to a file. The preview budget defaults to ~80,000 characters and can be changed with the `MAX_RESULT_CHARS` environment variable (e.g. `-e MAX_RESULT_CHARS=200000`).
 
 The tool does not send raw data to the LLM provider; it only shares SQL queries. The MCP server runs in an isolated Docker container with no access to your file system. The only information passed to the container is your Google Cloud credentials, used to authenticate with BigQuery via Application Default Credentials (ADC).
 
@@ -114,6 +116,11 @@ Ask Claude in plain language:
 ### Google Cloud account required
 - *"How many publications were published by University of Göttingen researchers between 2021 and 2025 in journals?"*
 - *"How many open access articles were published in 2023, broken down by OA type?"*
+
+After a query has run, you can keep digging into the stored result without paying for another query:
+- *"Break that down by year."*
+- *"Show me only the rows for 2023."*
+- *"Give me a summary of the columns — how many missing values are there?"*
 
 
 ## Contributing / local development
