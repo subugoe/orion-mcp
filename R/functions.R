@@ -399,7 +399,7 @@ export_dir_mounted <- function() {
   if (!file.exists("/proc/mounts")) return(NA)
   mounts <- tryCatch(readLines("/proc/mounts"), error = function(e) NULL)
   if (is.null(mounts)) return(NA)
-  any(str_detect(mounts, fixed(glue(" {EXPORT_DIR} "))))
+  any(str_detect(mounts, fixed(as.character(glue(" {EXPORT_DIR} ")))))
 }
 
 export_mount_note <- function() {
@@ -493,6 +493,32 @@ orion_export_bq_query <- function(query, filename = NULL) {
   ) |> toJSON(auto_unbox = TRUE, pretty = TRUE)
 }
 
+# ---- Authentication ----------------------------------------------------------
+
+# Authenticate with Application Default Credentials, preferring the
+# read-only BigQuery scope. gcloud user credentials (type "authorized_user")
+# only support a fixed set of scopes that excludes bigquery.readonly, so
+# fall back to the full BigQuery scope; actual permissions are still
+# limited by the user's IAM roles. Returns the granted scope, or NULL if
+# no credentials were found.
+bq_adc_auth <- function() {
+  scopes <- c(
+    "https://www.googleapis.com/auth/bigquery.readonly",
+    "https://www.googleapis.com/auth/bigquery"
+  )
+  for (scope in scopes) {
+    token <- tryCatch(
+      gargle::credentials_app_default(scopes = scope),
+      error = function(e) NULL
+    )
+    if (!is.null(token)) {
+      bq_auth(token = token)
+      return(scope)
+    }
+  }
+  NULL
+}
+
 # ---- Health check ------------------------------------------------------------
 
 orion_health_check <- function() {
@@ -520,10 +546,13 @@ orion_health_check <- function() {
 
   has_token <- tryCatch(bq_has_token(), error = function(e) FALSE)
   checks$google_credentials <- if (has_token) {
-    list(
-      status = "ok",
-      detail = "Google Cloud credentials loaded (Application Default Credentials)."
-    )
+    scope <- get0("auth_scope", ifnotfound = NULL)
+    detail <- if (is.null(scope)) {
+      "Google Cloud credentials loaded (Application Default Credentials)."
+    } else {
+      glue("Google Cloud credentials loaded (scope: {scope}).")
+    }
+    list(status = "ok", detail = detail)
   } else {
     list(
       status = "failed",

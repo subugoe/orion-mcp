@@ -13,20 +13,14 @@ options(bigrquery.quiet = TRUE)
 source(if (file.exists("R/functions.R")) "R/functions.R" else "/app/R/functions.R")
 
 # Authenticate with application default credentials (gcloud ADC mounted in
-# Docker), requesting only the read-only BigQuery scope. Failure is not
-# fatal: schema browsing works without credentials, and orion_health_check
-# reports what is missing.
-tryCatch(
-  {
-    token <- gargle::credentials_app_default(
-      scopes = "https://www.googleapis.com/auth/bigquery.readonly"
-    )
-    if (!is.null(token)) bq_auth(token = token)
-  },
-  error = function(e) {
-    message(glue("BigQuery auth skipped: {conditionMessage(e)}"))
-  }
-)
+# Docker). Failure is not fatal: schema browsing works without credentials,
+# and orion_health_check reports what is missing.
+auth_scope <- bq_adc_auth()
+if (is.null(auth_scope)) {
+  message("BigQuery auth skipped: no application default credentials found.")
+} else {
+  message(glue("BigQuery authenticated with scope {auth_scope}"))
+}
 
 schema_data <- load_schema_data()
 
