@@ -9,8 +9,9 @@ EXPORT_DIR <- Sys.getenv("EXPORT_DIR", "/data/exports")
 
 # Character budget for inline query results (~4 characters per token).
 # Full results are always kept in the R session; only the preview sent
-# to the LLM is capped.
-MAX_RESULT_CHARS <- as.integer(Sys.getenv("MAX_RESULT_CHARS", "80000"))
+# to the LLM is capped. Chosen so that preview plus message stays under
+# the ~25k-token tool-result cap that MCP clients like Claude Code apply.
+MAX_RESULT_CHARS <- as.integer(Sys.getenv("MAX_RESULT_CHARS", "60000"))
 
 read_jsonl <- function(path) {
   con <- file(path, "r")
@@ -72,6 +73,8 @@ orion_estimate_query_cost <- function(query) {
   bytes <- as.numeric(bq_perform_query_dry_run(query, billing = billing))
   gb <- round(bytes / 1e9, 3)
   cost <- round(bytes / 1e12 * 6.25, 4)
+  # Avoid scientific notation ("1e-04") in the user-facing message
+  cost_display <- format(cost, scientific = FALSE)
 
   dry_run_cache <<- unique(c(dry_run_cache, normalize_sql(query)))
 
@@ -81,7 +84,7 @@ orion_estimate_query_cost <- function(query) {
     cost_usd_estimate = cost,
     canonical_sql = normalize_sql(query),
     message = glue(
-      "This query will scan {gb} GB (estimated cost: ${cost}). ",
+      "This query will scan {gb} GB (estimated cost: ${cost_display}). ",
       "Present this to the user in exactly this order: ",
       "(1) the full SQL verbatim in a fenced ```sql code block — ",
       "never paraphrase or summarise the query instead of showing it; ",
