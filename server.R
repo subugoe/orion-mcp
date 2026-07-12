@@ -246,7 +246,7 @@ summarise_column <- function(col, nm) {
     column = nm,
     type = paste(class(col), collapse = "/"),
     missing = sum(is.na(col)),
-    distinct = n_distinct(col)
+    distinct = n_distinct(col, na.rm = TRUE)
   )
 
   if (is.numeric(col) && any(!is.na(col))) {
