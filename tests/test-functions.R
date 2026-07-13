@@ -11,6 +11,9 @@ suppressPackageStartupMessages({
   library(tidyverse)
   library(glue)
   library(jsonlite)
+  # Optional: only needed by the destination-table tests, which skip
+  # without it. No BigQuery access happens either way.
+  if (requireNamespace("bigrquery", quietly = TRUE)) library(bigrquery)
 })
 
 Sys.setenv(EXPORT_DIR = file.path(tempdir(), "orion-exports"))
@@ -239,6 +242,31 @@ test_that("read-only gate allows legitimate SELECT variants", {
   for (sql in allowed) {
     expect_no_error(assert_read_only_sql(sql))
   }
+})
+
+test_that("destination tables must be fully qualified", {
+  skip_if_not_installed("bigrquery")
+  dest <- parse_bq_table("my-project.my_dataset.my_table")
+  expect_equal(dest$project, "my-project")
+  expect_equal(dest$dataset, "my_dataset")
+  expect_equal(dest$table, "my_table")
+
+  expect_error(parse_bq_table("my_dataset.my_table"), "fully qualified")
+  expect_error(parse_bq_table("just_a_table"), "fully qualified")
+  expect_error(parse_bq_table("a..b"), "fully qualified")
+})
+
+test_that("query-to-table enforces the same gates as run", {
+  expect_error(
+    orion_query_to_table("SELECT doi FROM `p.d.t`", "p.d.out"),
+    "Cost estimate required"
+  )
+  dry_run_cache <<- c(dry_run_cache,
+                      normalize_sql("DROP TABLE `p.d.t`"))
+  expect_error(
+    orion_query_to_table("DROP TABLE `p.d.t`", "p.d.out"),
+    "read-only SELECT"
+  )
 })
 
 test_that("health check reports per-layer status without credentials", {

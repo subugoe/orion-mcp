@@ -136,7 +136,9 @@ orion_estimate_query_cost <- function(query) {
   ) |> toJSON(auto_unbox = TRUE, pretty = TRUE)
 }
 
-execute_bq_query <- function(sql) {
+# Gate every execution path: cost estimate done, read-only single SELECT,
+# no SELECT *, billing project set. Returns the billing project.
+validate_query <- function(sql) {
   if (!normalize_sql(sql) %in% dry_run_cache) {
     stop(glue(
       "Cost estimate required. Call orion_estimate_query_cost with this ",
@@ -160,15 +162,14 @@ execute_bq_query <- function(sql) {
   billing <- Sys.getenv("BQ_BILLING_PROJECT")
   if (billing == "") stop("BQ_BILLING_PROJECT environment variable not set")
 
-  job <- bq_perform_query(sql, billing = billing)
-  bq_job_wait(job, quiet = TRUE)
+  billing
+}
 
-  meta <- bq_job_meta(job)
-  query_stats <- meta$statistics$query
+job_billing_note <- function(query_stats) {
   cache_hit <- isTRUE(query_stats$cacheHit)
   gb_billed <- round(as.numeric(query_stats$totalBytesBilled %||% 0) / 1e9, 3)
 
-  billing_note <- if (cache_hit) {
+  if (cache_hit) {
     glue(
       "This run was served from BigQuery's 24-hour query cache — 0 bytes ",
       "billed. Re-running a byte-identical query within 24 hours is free."
@@ -176,12 +177,27 @@ execute_bq_query <- function(sql) {
   } else {
     glue("BigQuery billed {gb_billed} GB for this run.")
   }
+}
+
+execute_bq_query <- function(sql) {
+  billing <- validate_query(sql)
+
+  job <- bq_perform_query(sql, billing = billing)
+  bq_job_wait(job, quiet = TRUE)
+
+  meta <- bq_job_meta(job)
+  query_stats <- meta$statistics$query
+  billing_note <- job_billing_note(query_stats)
 
   dest <- meta$configuration$query$destinationTable
   result <- bq_table(dest$projectId, dest$datasetId, dest$tableId) |>
     bq_table_download(quiet = TRUE)
 
-  list(result = result, cache_hit = cache_hit, billing_note = billing_note)
+  list(
+    result = result,
+    cache_hit = isTRUE(query_stats$cacheHit),
+    billing_note = billing_note
+  )
 }
 
 # ---- Stored results ---------------------------------------------------------
@@ -525,6 +541,84 @@ orion_export_bq_query <- function(query, filename = NULL) {
       "exported, where the file appears on their machine, and briefly ",
       "explain what the query did — the user may be learning SQL and ",
       "BigQuery."
+    )
+  ) |> toJSON(auto_unbox = TRUE, pretty = TRUE)
+}
+
+# ---- Writing to BigQuery ------------------------------------------------------
+# Writes never happen through SQL (assert_read_only_sql blocks DML/DDL).
+# They are only possible through these tools, where the destination table
+# is an explicit argument the user has seen and confirmed. Whether a write
+# is permitted at all is governed by the user's IAM roles on the
+# destination project.
+
+parse_bq_table <- function(destination) {
+  parts <- str_split_1(destination, fixed("."))
+  if (length(parts) != 3 || any(parts == "")) {
+    stop(glue(
+      "destination must be fully qualified as 'project.dataset.table', ",
+      "got '{destination}'."
+    ))
+  }
+  bq_table(parts[1], parts[2], parts[3])
+}
+
+orion_save_result_to_bq <- function(name, destination, overwrite = FALSE) {
+  result <- get_result(name)
+  dest <- parse_bq_table(destination)
+
+  bq_table_upload(
+    dest,
+    result,
+    create_disposition = "CREATE_IF_NEEDED",
+    write_disposition = if (isTRUE(overwrite)) "WRITE_TRUNCATE" else "WRITE_EMPTY",
+    quiet = TRUE
+  )
+
+  list(
+    destination = destination,
+    rows = nrow(result),
+    columns = ncol(result),
+    result_name = name,
+    message = glue(
+      "Saved stored result '{name}' ({nrow(result)} rows x ",
+      "{ncol(result)} columns) to the BigQuery table {destination} via a ",
+      "load job — load jobs are free. ",
+      "When presenting this to the user, confirm in plain language where ",
+      "the table now lives and that they can query it like any other ",
+      "table; note the write used their own Google account's permissions."
+    )
+  ) |> toJSON(auto_unbox = TRUE, pretty = TRUE)
+}
+
+orion_query_to_table <- function(query, destination, overwrite = FALSE) {
+  billing <- validate_query(query)
+  dest <- parse_bq_table(destination)
+
+  job <- bq_perform_query(
+    query,
+    billing = billing,
+    destination_table = dest,
+    create_disposition = "CREATE_IF_NEEDED",
+    write_disposition = if (isTRUE(overwrite)) "WRITE_TRUNCATE" else "WRITE_EMPTY"
+  )
+  bq_job_wait(job, quiet = TRUE)
+
+  query_stats <- bq_job_meta(job)$statistics$query
+  n_rows <- tryCatch(as.numeric(bq_table_nrow(dest)), error = function(e) NA)
+
+  list(
+    destination = destination,
+    rows = n_rows,
+    message = glue(
+      "Query results written directly to the BigQuery table {destination} ",
+      "({if (is.na(n_rows)) 'row count unavailable' else glue('{n_rows} rows')}) ",
+      "— nothing was downloaded. {job_billing_note(query_stats)} ",
+      "The write itself is free; only the query scan is billed. ",
+      "SQL: {normalize_sql(query)}. ",
+      "When presenting this to the user, say in plain language what was ",
+      "computed and where the table now lives, and briefly explain what ",
+      "the query did — the user may be learning SQL and BigQuery."
     )
   ) |> toJSON(auto_unbox = TRUE, pretty = TRUE)
 }

@@ -19,6 +19,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install test dependencies
+        run: Rscript -e 'if (!requireNamespace("bigrquery", quietly = TRUE)) install.packages("bigrquery")'
+
       - name: Run unit tests
         run: Rscript tests/test-functions.R
 
