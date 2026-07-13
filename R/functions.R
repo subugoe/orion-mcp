@@ -297,7 +297,10 @@ orion_run_bq_query <- function(query) {
     "which tables it read and what the filters, joins, or aggregations did; ",
     "(3) mention that the full data is held in the local R session as ",
     "'{name}' (it was not uploaded anywhere) and can be analysed further ",
-    "or exported to a file on request.\n",
+    "or exported to a file on request. ",
+    "Present results as plain text and simple markdown tables in the ",
+    "chat — do NOT create charts, artifacts, or interactive ",
+    "visualisations unless the user explicitly asks for one.\n",
     "---\n",
     "{rendered$text}"
   )
@@ -377,7 +380,8 @@ orion_result_count <- function(name, by) {
     "({total_groups} distinct groups, top {rendered$rows_shown} shown, ",
     "column 'n' = rows per group).\n",
     "Explain to the user in plain language what was counted and what the ",
-    "top groups mean.\n",
+    "top groups mean. Present as plain text or a simple markdown table — ",
+    "no charts or artifacts unless the user explicitly asks.\n",
     "---\n",
     "{rendered$text}"
   )
@@ -437,7 +441,9 @@ orion_result_slice <- function(name, columns = NULL, filter_column = NULL,
   glue(
     "Slice of stored result '{name}' ({filter_note}): ",
     "{total} rows matched, showing {rendered$rows_shown}.\n",
-    "Explain to the user in plain language which subset this is.\n",
+    "Explain to the user in plain language which subset this is. ",
+    "Present as plain text or a simple markdown table — no charts or ",
+    "artifacts unless the user explicitly asks.\n",
     "---\n",
     "{rendered$text}"
   )
