@@ -11,6 +11,9 @@ suppressPackageStartupMessages({
   library(tidyverse)
   library(glue)
   library(jsonlite)
+  # Optional: only needed by the destination-table tests, which skip
+  # without it. No BigQuery access happens either way.
+  if (requireNamespace("bigrquery", quietly = TRUE)) library(bigrquery)
 })
 
 Sys.setenv(EXPORT_DIR = file.path(tempdir(), "orion-exports"))
@@ -203,6 +206,67 @@ test_that("normalize_sql collapses whitespace only", {
 test_that("unrun queries are rejected before reaching BigQuery", {
   expect_error(execute_bq_query("SELECT doi FROM t"),
                "Cost estimate required")
+})
+
+test_that("read-only gate blocks DML, DDL and scripts", {
+  blocked <- c(
+    "INSERT INTO `p.d.t` (x) VALUES (1)",
+    "DELETE FROM `p.d.t` WHERE TRUE",
+    "UPDATE `p.d.t` SET x = 1 WHERE TRUE",
+    "DROP TABLE `p.d.t`",
+    "CREATE TABLE `p.d.t` (x INT64)",
+    "MERGE `p.d.t` USING `p.d.s` ON FALSE WHEN MATCHED THEN DELETE",
+    "TRUNCATE TABLE `p.d.t`",
+    "EXECUTE IMMEDIATE 'SELECT 1'"
+  )
+  for (sql in blocked) {
+    expect_error(assert_read_only_sql(sql), "read-only SELECT")
+  }
+
+  expect_error(
+    assert_read_only_sql("SELECT 1; DROP TABLE `p.d.t`"),
+    "Multi-statement"
+  )
+})
+
+test_that("read-only gate allows legitimate SELECT variants", {
+  allowed <- c(
+    "SELECT doi FROM `p.d.t`",
+    "WITH x AS (SELECT doi FROM `p.d.t`) SELECT doi FROM x",
+    "select doi from `p.d.t`",
+    "SELECT doi FROM `p.d.t`;",
+    "SELECT doi FROM `p.d.t` WHERE note = 'a;b'",
+    "-- leading comment\nSELECT doi FROM `p.d.t`",
+    "/* block comment */ SELECT doi FROM `p.d.t`"
+  )
+  for (sql in allowed) {
+    expect_no_error(assert_read_only_sql(sql))
+  }
+})
+
+test_that("destination tables must be fully qualified", {
+  skip_if_not_installed("bigrquery")
+  dest <- parse_bq_table("my-project.my_dataset.my_table")
+  expect_equal(dest$project, "my-project")
+  expect_equal(dest$dataset, "my_dataset")
+  expect_equal(dest$table, "my_table")
+
+  expect_error(parse_bq_table("my_dataset.my_table"), "fully qualified")
+  expect_error(parse_bq_table("just_a_table"), "fully qualified")
+  expect_error(parse_bq_table("a..b"), "fully qualified")
+})
+
+test_that("query-to-table enforces the same gates as run", {
+  expect_error(
+    orion_query_to_table("SELECT doi FROM `p.d.t`", "p.d.out"),
+    "Cost estimate required"
+  )
+  dry_run_cache <<- c(dry_run_cache,
+                      normalize_sql("DROP TABLE `p.d.t`"))
+  expect_error(
+    orion_query_to_table("DROP TABLE `p.d.t`", "p.d.out"),
+    "read-only SELECT"
+  )
 })
 
 test_that("health check reports per-layer status without credentials", {

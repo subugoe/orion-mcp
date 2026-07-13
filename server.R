@@ -290,6 +290,62 @@ mcp_server(
       )
     ),
     tool(
+      orion_save_result_to_bq,
+      glue(
+        "WRITE TOOL: Save a stored query result (q1, q2, ...) as a table ",
+        "in BigQuery via a load job — load jobs are FREE. Use when the ",
+        "user wants to persist results in BigQuery (e.g. in their own ",
+        "project) instead of, or in addition to, a local file. ",
+        "The user's own IAM permissions decide whether the write is ",
+        "allowed; typically the destination is a dataset in their billing ",
+        "project. ",
+        "NEVER invent the destination: ask the user for it, or confirm ",
+        "your suggestion explicitly before calling this tool. ",
+        "By default this fails if the destination table already exists; ",
+        "set overwrite only when the user explicitly asked to replace it."
+      ),
+      arguments = list(
+        name = type_string("Name of the stored result (e.g. 'q1')"),
+        destination = type_string(
+          "Fully qualified destination table as 'project.dataset.table'"
+        ),
+        overwrite = type_boolean(
+          "Replace the table if it already exists (default FALSE)",
+          required = FALSE
+        )
+      )
+    ),
+    tool(
+      orion_query_to_table,
+      glue(
+        "WRITE TOOL / ALTERNATIVE TO STEP 5: Execute a SELECT query and ",
+        "write the results DIRECTLY to a destination BigQuery table, ",
+        "without downloading anything. Use for large derived tables that ",
+        "should live in BigQuery rather than pass through the R session. ",
+        "Only the query scan is billed; the write itself is free. ",
+        "PREREQUISITES: orion_estimate_query_cost MUST have been called ",
+        "for this exact SQL, the user must have confirmed the cost, AND ",
+        "the user must have named or explicitly confirmed the destination ",
+        "table — never invent it. Only single SELECT statements are ",
+        "accepted; DML/DDL is blocked. ",
+        "By default this fails if the destination table already exists; ",
+        "set overwrite only when the user explicitly asked to replace it."
+      ),
+      arguments = list(
+        query = type_string(glue(
+          "The fully-qualified BigQuery SQL query to execute ",
+          "(include project.dataset.table in the query itself)"
+        )),
+        destination = type_string(
+          "Fully qualified destination table as 'project.dataset.table'"
+        ),
+        overwrite = type_boolean(
+          "Replace the table if it already exists (default FALSE)",
+          required = FALSE
+        )
+      )
+    ),
+    tool(
       orion_export_bq_query,
       glue(
         "ALTERNATIVE TO STEP 5: Execute a BigQuery SQL query and export ",

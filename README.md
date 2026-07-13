@@ -27,7 +27,11 @@ If you are new to Google Cloud, you will also need a [Google account and a Cloud
 gcloud auth application-default login
 ```
 
-This opens a browser window and saves credentials to `~/.config/gcloud/`. You only need to do this once. When the MCP server starts, it requests the narrowest access scope your credential type supports: `bigquery.readonly` where possible (service accounts), otherwise the standard BigQuery scope — gcloud user credentials do not support the read-only scope. In either case, what the server can actually do is limited by your own Google account's IAM permissions, and the server itself never issues anything but queries.
+This opens a browser window and saves credentials to `~/.config/gcloud/`. You only need to do this once. When the MCP server starts, it requests the narrowest access scope your credential type supports: `bigquery.readonly` where possible (service accounts), otherwise the standard BigQuery scope — gcloud user credentials do not support the read-only scope.
+
+Regardless of what the credentials would allow, **the server enforces read-only SQL itself**: it executes only single `SELECT` statements. Data-modifying SQL (`INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`, multi-statement scripts, ...) is rejected before it reaches BigQuery.
+
+Writing is still possible — but only through two dedicated tools where the destination table is an explicit argument you confirm in the conversation, never through SQL: `orion_save_result_to_bq` uploads an already-run result as a table (a free load job), and `orion_query_to_table` writes large query results directly to a table in your project without downloading them (only the query scan is billed). Both refuse to touch an existing table unless you explicitly ask to overwrite it, and both are bounded by your own IAM permissions.
 
 ### 2. Pull the Docker image
 
