@@ -27,7 +27,9 @@ If you are new to Google Cloud, you will also need a [Google account and a Cloud
 gcloud auth application-default login
 ```
 
-This opens a browser window and saves credentials to `~/.config/gcloud/`. You only need to do this once. When the MCP server starts, it requests the narrowest access scope your credential type supports: `bigquery.readonly` where possible (service accounts), otherwise the standard BigQuery scope — gcloud user credentials do not support the read-only scope. In either case, what the server can actually do is limited by your own Google account's IAM permissions, and the server itself never issues anything but queries.
+This opens a browser window and saves credentials to `~/.config/gcloud/`. You only need to do this once. When the MCP server starts, it requests the narrowest access scope your credential type supports: `bigquery.readonly` where possible (service accounts), otherwise the standard BigQuery scope — gcloud user credentials do not support the read-only scope.
+
+Regardless of what the credentials would allow, **the server enforces read-only access itself**: it executes only single `SELECT` statements. Data-modifying SQL (`INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`, multi-statement scripts, ...) is rejected before it reaches BigQuery, so the server cannot change or delete any data even if your Google account has write permissions.
 
 ### 2. Pull the Docker image
 

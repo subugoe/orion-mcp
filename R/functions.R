@@ -66,9 +66,44 @@ dry_run_cache <- character(0)
 
 normalize_sql <- function(sql) str_squish(sql)
 
+# The OAuth token may carry a write-capable scope (gcloud user credentials
+# do not support bigquery.readonly), so read-only access is enforced here
+# instead: exactly one statement, and it must be a SELECT (optionally
+# starting with WITH). Blocks DML/DDL and multi-statement scripts
+# regardless of what the credentials would allow. Returns the SQL with
+# string literals and comments blanked, for further pattern checks.
+assert_read_only_sql <- function(sql) {
+  clean <- sql |>
+    str_replace_all("'[^']*'", "''") |>
+    str_replace_all('"[^"]*"', '""') |>
+    str_remove_all(regex("/\\*.*?\\*/", dotall = TRUE)) |>
+    str_remove_all("--[^\n]*") |>
+    str_squish() |>
+    str_remove(";$")
+
+  if (str_detect(clean, fixed(";"))) {
+    stop(glue(
+      "Multi-statement SQL scripts are not allowed — submit a single ",
+      "SELECT query."
+    ))
+  }
+  if (!str_detect(clean, regex("^(WITH|SELECT)\\b", ignore_case = TRUE))) {
+    stop(glue(
+      "Only read-only SELECT queries are allowed. Data-modifying ",
+      "statements (INSERT, UPDATE, DELETE, MERGE, CREATE, DROP, ALTER, ",
+      "TRUNCATE, ...) are blocked by this server regardless of the ",
+      "credentials' permissions."
+    ))
+  }
+
+  invisible(clean)
+}
+
 orion_estimate_query_cost <- function(query) {
   billing <- Sys.getenv("BQ_BILLING_PROJECT")
   if (billing == "") stop("BQ_BILLING_PROJECT environment variable not set")
+
+  assert_read_only_sql(query)
 
   bytes <- as.numeric(bq_perform_query_dry_run(query, billing = billing))
   gb <- round(bytes / 1e9, 3)
@@ -110,11 +145,9 @@ execute_bq_query <- function(sql) {
     ))
   }
 
-  # Blank out string literals so SELECT * detection doesn't false-positive
-  # on '.*' sequences inside regex patterns or quoted values.
-  sql_no_strings <- sql |>
-    str_replace_all("'[^']*'", "''") |>
-    str_replace_all('"[^"]*"', '""')
+  # Also blanks string literals so SELECT * detection below doesn't
+  # false-positive on '.*' sequences inside regex patterns or quoted values.
+  sql_no_strings <- assert_read_only_sql(sql)
 
   if (str_detect(sql_no_strings,
                  regex("SELECT\\s+\\*|\\w+\\.\\*", ignore_case = TRUE))) {
