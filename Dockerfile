@@ -24,7 +24,8 @@ RUN install2.r \
 # Install mcptools separately (has complex dependencies)
 RUN R -e 'install.packages("mcptools", type = "source")'
 
-COPY server.R /server.R
+COPY R /app/R
+COPY server.R /app/server.R
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

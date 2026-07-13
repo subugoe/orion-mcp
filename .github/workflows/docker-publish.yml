@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  pull_request:
   workflow_dispatch:
 
 env:
@@ -11,7 +12,19 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: rocker/tidyverse:4.5.3
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run unit tests
+        run: Rscript tests/test-functions.R
+
   build:
+    if: github.event_name != 'pull_request'
+    needs: test
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
