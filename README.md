@@ -53,35 +53,13 @@ Open your Claude Desktop config file in a text editor:
   > Or in Finder: **Go → Go to Folder** (`⇧⌘G`) and paste `~/Library/Application Support/Claude/`
 - **Linux:** `~/.config/Claude/claude_desktop_config.json`
 
-Add the `orion-dbs` entry inside `mcpServers`. If the file already contains other servers, add a comma after the last entry before adding this one, as JSON is strict about commas.
+First create the folder where exported query results will appear on your machine:
 
-```json
-{
-  "mcpServers": {
-    "orion-dbs": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "-v", "/Users/YOUR_USERNAME/.config/gcloud:/root/.config/gcloud:ro",
-        "-e", "BQ_BILLING_PROJECT=YOUR_PROJECT_ID",
-        "ghcr.io/subugoe/orion-mcp:latest"
-      ]
-    }
-  }
-}
+```bash
+mkdir -p ~/Downloads/orion-exports
 ```
 
-Replace:
-- `YOUR_USERNAME` — your macOS/Linux username (on Linux use `/home/YOUR_USERNAME/...`)
-- `YOUR_PROJECT_ID` — your GCP project ID, e.g. `my-project-123456`. Find it in the [Google Cloud Console](https://console.cloud.google.com/) by clicking the project selector in the top bar.
-
-> Schema browsing (`orion_list_datasets`, `orion_list_tables`, `orion_get_db_schema`) works without a billing project. You can omit the `BQ_BILLING_PROJECT` line entirely if you only want to explore schemas.
-
-BigQuery bills by bytes scanned, not rows returned. The [BigQuery sandbox](https://cloud.google.com/bigquery/docs/sandbox) gives every account 1 TB of free query processing per month.
-
-#### Accessing exported files
-
-When you ask Claude to export query results, files are written to `/data/exports` **inside the container**. To access them on your machine, add a volume mount:
+Then add the `orion-dbs` entry inside `mcpServers`. If the file already contains other servers, add a comma after the last entry before adding this one, as JSON is strict about commas.
 
 ```json
 {
@@ -100,7 +78,17 @@ When you ask Claude to export query results, files are written to `/data/exports
 }
 ```
 
-The second `-v` line mounts `~/Downloads/orion-exports` on your machine to `/data/exports` in the container. Exported CSVs and JSON files will appear there. You can use any directory you like, just create it first (`mkdir ~/Downloads/orion-exports`).
+Replace:
+- `YOUR_USERNAME` — your macOS/Linux username (on Linux use `/home/YOUR_USERNAME/...`)
+- `YOUR_PROJECT_ID` — your GCP project ID, e.g. `my-project-123456`. Find it in the [Google Cloud Console](https://console.cloud.google.com/) by clicking the project selector in the top bar.
+
+> Schema browsing (`orion_list_datasets`, `orion_list_tables`, `orion_get_db_schema`) works without a billing project. You can omit the `BQ_BILLING_PROJECT` line entirely if you only want to explore schemas.
+
+BigQuery bills by bytes scanned, not rows returned. The [BigQuery sandbox](https://cloud.google.com/bigquery/docs/sandbox) gives every account 1 TB of free query processing per month.
+
+#### How exports reach your machine
+
+The container is isolated from your file system. When you ask Claude to export query results, files are written to `/data/exports` **inside the container**; the second `-v` line above maps that folder to `~/Downloads/orion-exports` on your machine, so exports appear there instantly. You can use any directory you like — but without this mount, exported files are lost when the container stops (the export tool and the *"check my setup"* health check will both warn you if the mount is missing).
 
 To change the in-container export path, set the `EXPORT_DIR` environment variable (e.g. `-e EXPORT_DIR=/tmp/exports`).
 
