@@ -51,6 +51,8 @@ local({
 })
 
 mcp_server(
+  # Tools run in this process; no need for mcptools' external R-session routing.
+  session_tools = FALSE,
   tools = list(
     tool(
       orion_health_check,
