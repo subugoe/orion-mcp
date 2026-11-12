@@ -295,7 +295,10 @@ mcp_server(
         filename = type_string(
           glue(
             "Optional filename for the export (e.g. 'results.csv'). ",
-            "Auto-generated with timestamp if omitted."
+            "Auto-generated with timestamp if omitted. Only the bare file ",
+            "name is used (folders are ignored), the extension is set to ",
+            "the format written, and an existing file is never overwritten: ",
+            "a number is appended instead."
           ),
           required = FALSE
         )
@@ -387,7 +390,10 @@ mcp_server(
         filename = type_string(
           glue(
             "Optional filename for the export (e.g. 'results.csv'). ",
-            "Auto-generated with timestamp if omitted."
+            "Auto-generated with timestamp if omitted. Only the bare file ",
+            "name is used (folders are ignored), the extension is set to ",
+            "the format written, and an existing file is never overwritten: ",
+            "a number is appended instead."
           ),
           required = FALSE
         )

@@ -747,17 +747,35 @@ export_mount_note <- function() {
   }
 }
 
+# The filename comes from the model, so it is reduced to a bare name inside
+# `dir` (no "../" or absolute paths), given the extension of the format that
+# is actually written, and never overwrites an earlier export: a counter is
+# appended instead (results.csv, results_1.csv, ...).
+export_path <- function(filename, ext, dir = EXPORT_DIR) {
+  stem <- if (is.null(filename)) "" else {
+    filename |>
+      basename() |>
+      tools::file_path_sans_ext()
+  }
+  if (stem %in% c("", ".", "..")) {
+    stem <- glue("orion_export_{format(Sys.time(), '%Y%m%d_%H%M%S')}")
+  }
+
+  candidate <- stem
+  i <- 0L
+  while (file.exists(file.path(dir, glue("{candidate}.{ext}")))) {
+    i <- i + 1L
+    candidate <- glue("{stem}_{i}")
+  }
+  file.path(dir, glue("{candidate}.{ext}"))
+}
+
 write_export <- function(result, filename = NULL) {
   nested <- has_nested(result)
   ext <- if (nested) "json" else "csv"
 
-  if (is.null(filename)) {
-    timestamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
-    filename <- glue("orion_export_{timestamp}.{ext}")
-  }
-
   dir.create(EXPORT_DIR, showWarnings = FALSE, recursive = TRUE)
-  path <- file.path(EXPORT_DIR, filename)
+  path <- export_path(filename, ext)
 
   if (nested) {
     write(toJSON(result, auto_unbox = TRUE, pretty = TRUE), path)
@@ -765,7 +783,18 @@ write_export <- function(result, filename = NULL) {
     write_csv(result, path)
   }
 
-  list(path = path, format = ext)
+  renamed <- !is.null(filename) && basename(path) != filename
+  list(path = path, format = ext, renamed = renamed)
+}
+
+# Tells the model when the file name differs from the one it asked for.
+export_rename_note <- function(export, filename) {
+  if (!isTRUE(export$renamed)) return("")
+  glue(
+    "The requested filename '{filename}' was saved as '{basename(export$path)}' ",
+    "(exports stay in the export folder, the extension matches the format, ",
+    "and existing files are not overwritten). "
+  )
 }
 
 orion_export_result <- function(name, filename = NULL) {
@@ -782,6 +811,7 @@ orion_export_result <- function(name, filename = NULL) {
       "Exported stored result '{name}' ({nrow(result)} rows x ",
       "{ncol(result)} columns) to {export$path} (a path inside the ",
       "container) without touching BigQuery — this cost nothing. ",
+      "{export_rename_note(export, filename)}",
       "{export_mount_note()} ",
       "When presenting this to the user, say in plain language what was ",
       "exported and where the file appears on their machine."
@@ -804,6 +834,7 @@ orion_export_bq_query <- function(query, filename = NULL) {
     message = glue(
       "Exported {nrow(result)} rows x {ncol(result)} columns to ",
       "{export$path} (a path inside the container). {run$billing_note} ",
+      "{export_rename_note(export, filename)}",
       "{export_mount_note()} ",
       "The result is also stored in the R session as '{name}' for the ",
       "analysis tools. ",

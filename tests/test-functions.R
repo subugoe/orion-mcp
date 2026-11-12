@@ -334,6 +334,48 @@ test_that("stored results export to file without touching BigQuery", {
   expect_equal(out_nested$format, "json")
 })
 
+test_that("export filenames stay in the export folder", {
+  dir <- withr::local_tempdir()
+  expect_equal(export_path("../x.csv", "csv", dir), file.path(dir, "x.csv"))
+  expect_equal(export_path("/etc/x.csv", "csv", dir), file.path(dir, "x.csv"))
+  expect_equal(export_path("a/b/../../x.csv", "csv", dir), file.path(dir, "x.csv"))
+  expect_match(basename(export_path("..", "csv", dir)), "^orion_export_\\d{8}_\\d{6}\\.csv$")
+  expect_match(basename(export_path(NULL, "json", dir)), "^orion_export_.*\\.json$")
+
+  name <- store_result(tibble(x = 1:2))
+  out <- fromJSON(orion_export_result(name, "../outside.csv"), simplifyVector = FALSE)
+  expect_equal(dirname(out$path), EXPORT_DIR)
+  expect_false(file.exists(file.path(dirname(EXPORT_DIR), "outside.csv")))
+  expect_match(out$message, "was saved as 'outside.csv'")
+})
+
+test_that("export filenames get the extension of the format written", {
+  dir <- withr::local_tempdir()
+  expect_equal(basename(export_path("results.json", "csv", dir)), "results.csv")
+  expect_equal(basename(export_path("results", "csv", dir)), "results.csv")
+  expect_equal(basename(export_path("results.CSV", "json", dir)), "results.json")
+
+  nested <- store_result(tibble(doi = "10.1/a", authors = list(list("A"))))
+  out <- fromJSON(orion_export_result(nested, "nested.csv"), simplifyVector = FALSE)
+  expect_equal(basename(out$path), "nested.json")
+  expect_equal(out$format, "json")
+})
+
+test_that("exports never overwrite an existing file", {
+  dir <- withr::local_tempdir()
+  writeLines("old", file.path(dir, "r.csv"))
+  writeLines("old", file.path(dir, "r_1.csv"))
+  expect_equal(basename(export_path("r.csv", "csv", dir)), "r_2.csv")
+
+  name <- store_result(tibble(x = 1:2))
+  first <- fromJSON(orion_export_result(name, "twice.csv"), simplifyVector = FALSE)
+  second <- fromJSON(orion_export_result(name, "twice.csv"), simplifyVector = FALSE)
+  expect_equal(basename(first$path), "twice.csv")
+  expect_equal(basename(second$path), "twice_1.csv")
+  expect_false(str_detect(first$message, "was saved as"))
+  expect_match(second$message, "was saved as 'twice_1.csv'")
+})
+
 test_that("SELECT * guard blocks wildcards but not regex literals", {
   strip <- function(sql) {
     sql |>
