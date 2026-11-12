@@ -62,9 +62,80 @@ orion_get_db_schema <- function(project, dataset, table) {
 
 # ---- Cost estimation and query execution ------------------------------------
 
-dry_run_cache <- character(0)
+# Normalised SQL -> estimated bytes from the dry run. A query can only run
+# if it is in here, and its job is capped at what the estimate allows.
+dry_run_cache <- numeric(0)
+# Normalised SQL -> number of tables the query reads (for the billing floor)
+dry_run_tables <- integer(0)
 
 normalize_sql <- function(sql) str_squish(sql)
+
+cache_dry_run <- function(sql, bytes, n_tables = 1L) {
+  key <- normalize_sql(sql)
+  dry_run_cache[key] <<- bytes
+  dry_run_tables[key] <<- as.integer(n_tables)
+  invisible(key)
+}
+
+# Labels let users filter spending by tool in the Cloud billing export.
+JOB_LABELS <- list(tool = "orion-mcp")
+
+# Ceiling for maximumBytesBilled. BigQuery bills at least 10 MB per table
+# read and rounds up to whole MB, so a cap equal to the bare estimate would
+# fail small queries. Returns NULL (no cap) for a 0-byte estimate.
+max_bytes_billed <- function(bytes, n_tables = 1L) {
+  if (is.na(bytes) || bytes <= 0) return(NULL)
+  mib <- 2^20
+  ceiling((bytes + 10 * mib * max(1L, n_tables)) / mib) * mib
+}
+
+# Extra arguments for bq_perform_query(); bq_body() merges them into the
+# request. BigQuery expects int64 values as strings.
+job_limit_args <- function(max_bytes) {
+  if (is.null(max_bytes)) return(list())
+  list(configuration = list(query = list(
+    maximumBytesBilled = format(max_bytes, scientific = FALSE)
+  )))
+}
+
+read_limit_env <- function(var, default) {
+  raw <- Sys.getenv(var, default)
+  value <- suppressWarnings(as.numeric(raw))
+  if (is.na(value) || value <= 0) {
+    stop(glue("{var} must be a positive number, got '{raw}'."))
+  }
+  value
+}
+
+# Refuse very large scans before the user is even asked to confirm them.
+assert_query_size <- function(bytes, max_gb = read_limit_env("MAX_GB_PER_QUERY", "500")) {
+  gb <- bytes / 1e9
+  if (gb > max_gb) {
+    stop(glue(
+      "This query would scan {round(gb, 1)} GB, above the server limit of ",
+      "{max_gb} GB per query. Narrow the query (fewer columns, partition ",
+      "filters, smaller tables), or raise the limit with the ",
+      "MAX_GB_PER_QUERY environment variable."
+    ))
+  }
+  invisible(TRUE)
+}
+
+# Downloading a huge result blocks the server and can exhaust its memory.
+assert_download_size <- function(n_rows, billing_note,
+                                 max_rows = read_limit_env("MAX_DOWNLOAD_ROWS", "1000000")) {
+  if (!is.na(n_rows) && n_rows > max_rows) {
+    stop(glue(
+      "The query returned {format(n_rows, big.mark = ',', scientific = FALSE)} ",
+      "rows, above the download limit of ",
+      "{format(max_rows, big.mark = ',', scientific = FALSE)} rows ",
+      "(MAX_DOWNLOAD_ROWS), so nothing was downloaded. {billing_note} ",
+      "Options: aggregate or filter the query so it returns fewer rows, or ",
+      "use orion_query_to_table to keep the result in BigQuery."
+    ))
+  }
+  invisible(TRUE)
+}
 
 # TRUE if the quote at position i carries a raw prefix (r, rb, br; any
 # case). Inside raw literals a backslash does not escape.
@@ -195,7 +266,8 @@ bq_dry_run_stats <- function(query, billing) {
   )
   list(
     bytes = as.numeric(res$statistics$query$totalBytesProcessed),
-    statement_type = res$statistics$query$statementType
+    statement_type = res$statistics$query$statementType,
+    n_tables = length(res$statistics$query$referencedTables)
   )
 }
 
@@ -239,12 +311,13 @@ orion_estimate_query_cost <- function(query) {
   # Rejected SQL never enters the dry-run cache, so it cannot be run.
   assert_select_statement(stats$statement_type)
   bytes <- stats$bytes
+  assert_query_size(bytes)
   gb <- round(bytes / 1e9, 3)
   cost <- round(bytes / 1e12 * 6.25, 4)
   # Avoid scientific notation ("1e-04") in the user-facing message
   cost_display <- format(cost, scientific = FALSE)
 
-  dry_run_cache <<- unique(c(dry_run_cache, normalize_sql(query)))
+  cache_dry_run(query, bytes, stats$n_tables)
 
   list(
     bytes_processed = bytes,
@@ -270,9 +343,11 @@ orion_estimate_query_cost <- function(query) {
 }
 
 # Gate every execution path: cost estimate done, read-only single SELECT,
-# no SELECT *, billing project set. Returns the billing project.
+# no SELECT *, billing project set. Returns the billing project and the
+# maximumBytesBilled cap derived from the cached estimate.
 validate_query <- function(sql) {
-  if (!normalize_sql(sql) %in% dry_run_cache) {
+  key <- normalize_sql(sql)
+  if (!key %in% names(dry_run_cache)) {
     stop(glue(
       "Cost estimate required. Call orion_estimate_query_cost with this ",
       "exact SQL first, show the user the SQL and the estimated cost, and ",
@@ -295,7 +370,38 @@ validate_query <- function(sql) {
   billing <- Sys.getenv("BQ_BILLING_PROJECT")
   if (billing == "") stop("BQ_BILLING_PROJECT environment variable not set")
 
-  billing
+  list(
+    billing = billing,
+    max_bytes = max_bytes_billed(
+      dry_run_cache[[key]],
+      if (key %in% names(dry_run_tables)) dry_run_tables[[key]] else 1L
+    )
+  )
+}
+
+# Run a paid query job with the byte cap and label. If BigQuery stops it at
+# the cap, say why: the data may have grown since the estimate.
+run_capped_job <- function(sql, gate, ...) {
+  job <- do.call(
+    bq_perform_query,
+    c(list(sql, billing = gate$billing, labels = JOB_LABELS, ...),
+      job_limit_args(gate$max_bytes))
+  )
+  tryCatch(
+    bq_job_wait(job, quiet = TRUE),
+    error = function(e) {
+      if (str_detect(conditionMessage(e), regex("bytes billed", ignore_case = TRUE))) {
+        stop(glue(
+          "BigQuery stopped the query because it would bill more than the ",
+          "dry-run estimate allowed; nothing was charged. The data may have ",
+          "changed since the estimate. Call orion_estimate_query_cost again ",
+          "and show the user the new cost. ({conditionMessage(e)})"
+        ), call. = FALSE)
+      }
+      stop(e)
+    }
+  )
+  job
 }
 
 job_billing_note <- function(query_stats) {
@@ -313,18 +419,17 @@ job_billing_note <- function(query_stats) {
 }
 
 execute_bq_query <- function(sql) {
-  billing <- validate_query(sql)
-
-  job <- bq_perform_query(sql, billing = billing)
-  bq_job_wait(job, quiet = TRUE)
+  gate <- validate_query(sql)
+  job <- run_capped_job(sql, gate)
 
   meta <- bq_job_meta(job)
   query_stats <- meta$statistics$query
   billing_note <- job_billing_note(query_stats)
 
   dest <- meta$configuration$query$destinationTable
-  result <- bq_table(dest$projectId, dest$datasetId, dest$tableId) |>
-    bq_table_download(quiet = TRUE)
+  dest_table <- bq_table(dest$projectId, dest$datasetId, dest$tableId)
+  assert_download_size(bq_table_nrow(dest_table), billing_note)
+  result <- bq_table_download(dest_table, quiet = TRUE)
 
   list(
     result = result,
@@ -731,17 +836,16 @@ orion_save_result_to_bq <- function(name, destination, overwrite = FALSE) {
 }
 
 orion_query_to_table <- function(query, destination, overwrite = FALSE) {
-  billing <- validate_query(query)
+  gate <- validate_query(query)
   dest <- parse_bq_table(destination)
 
-  job <- bq_perform_query(
+  job <- run_capped_job(
     query,
-    billing = billing,
+    gate,
     destination_table = dest,
     create_disposition = "CREATE_IF_NEEDED",
     write_disposition = if (isTRUE(overwrite)) "WRITE_TRUNCATE" else "WRITE_EMPTY"
   )
-  bq_job_wait(job, quiet = TRUE)
 
   query_stats <- bq_job_meta(job)$statistics$query
   n_rows <- tryCatch(as.numeric(bq_table_nrow(dest)), error = function(e) NA)

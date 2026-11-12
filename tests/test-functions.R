@@ -310,12 +310,75 @@ test_that("query-to-table enforces the same gates as run", {
     orion_query_to_table("SELECT doi FROM `p.d.t`", "p.d.out"),
     "Cost estimate required"
   )
-  dry_run_cache <<- c(dry_run_cache,
-                      normalize_sql("DROP TABLE `p.d.t`"))
+  cache_dry_run("DROP TABLE `p.d.t`", 0)
   expect_error(
     orion_query_to_table("DROP TABLE `p.d.t`", "p.d.out"),
     "read-only SELECT"
   )
+})
+
+test_that("dry-run cache stores estimated bytes per normalised SQL", {
+  cache_dry_run("SELECT  doi\nFROM `p.d.t`", 5e9, n_tables = 2)
+  key <- "SELECT doi FROM `p.d.t`"
+  expect_equal(dry_run_cache[[key]], 5e9)
+  expect_equal(dry_run_tables[[key]], 2L)
+
+  # validate_query passes the cap on; it needs a billing project
+  withr::with_envvar(c(BQ_BILLING_PROJECT = "bill"), {
+    gate <- validate_query("SELECT doi FROM `p.d.t`")
+    expect_equal(gate$billing, "bill")
+    expect_equal(gate$max_bytes, max_bytes_billed(5e9, 2))
+  })
+})
+
+test_that("maximumBytesBilled cap covers the estimate and BigQuery's minimum", {
+  mib <- 2^20
+  expect_null(max_bytes_billed(0))
+  expect_equal(max_bytes_billed(1), 11 * mib)  # 10 MB floor, whole MB
+  expect_equal(max_bytes_billed(1, n_tables = 3), 31 * mib)
+  expect_gte(max_bytes_billed(5e9), 5e9)
+
+  expect_equal(job_limit_args(NULL), list())
+  args <- job_limit_args(12 * 1e9)
+  expect_identical(args$configuration$query$maximumBytesBilled, "12000000000")
+
+  # Merges into the request without dropping the query fields
+  skip_if_not_installed("bigrquery")
+  body <- list(configuration = list(query = list(query = "SELECT 1")))
+  merged <- do.call(bigrquery:::bq_body, c(list(body), args))
+  expect_equal(merged$configuration$query$query, "SELECT 1")
+  expect_equal(merged$configuration$query$maximumBytesBilled, "12000000000")
+})
+
+test_that("per-query size limit is enforced and configurable", {
+  expect_no_error(assert_query_size(499e9, max_gb = 500))
+  expect_no_error(assert_query_size(500e9, max_gb = 500))
+  expect_error(assert_query_size(501e9, max_gb = 500), "MAX_GB_PER_QUERY")
+
+  withr::with_envvar(c(MAX_GB_PER_QUERY = "lots"), {
+    expect_error(assert_query_size(1), "MAX_GB_PER_QUERY must be a positive")
+  })
+  withr::with_envvar(c(MAX_GB_PER_QUERY = "1"), {
+    expect_error(assert_query_size(2e9), "above the server limit of 1 GB")
+  })
+  withr::with_envvar(c(MAX_GB_PER_QUERY = NA), {
+    expect_no_error(assert_query_size(400e9))
+    expect_error(assert_query_size(600e9), "500 GB")
+  })
+})
+
+test_that("large results are not downloaded", {
+  note <- "BigQuery billed 1.5 GB for this run."
+  expect_no_error(assert_download_size(1e6, note, max_rows = 1e6))
+  err <- expect_error(assert_download_size(2e6, note, max_rows = 1e6))
+  expect_match(conditionMessage(err), "2,000,000 rows")
+  expect_match(conditionMessage(err), "billed 1.5 GB", fixed = TRUE)
+  expect_match(conditionMessage(err), "orion_query_to_table")
+  expect_no_error(assert_download_size(NA, note, max_rows = 1))
+
+  withr::with_envvar(c(MAX_DOWNLOAD_ROWS = "abc"), {
+    expect_error(assert_download_size(10, note), "MAX_DOWNLOAD_ROWS must be")
+  })
 })
 
 test_that("health check reports per-layer status without credentials", {

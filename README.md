@@ -11,6 +11,11 @@ Contributions and feedback are welcome via GitHub issues.
 
 Query results of any size are kept **in the local R session** (named `q1`, `q2`, ...) — only a size-capped preview is sent to the LLM, so large results never overflow the conversation. The LLM can then analyse the full result by reference using built-in tools (`orion_result_summary`, `orion_result_count`, `orion_result_slice`) or write it to a file with `orion_export_result` — all without re-querying BigQuery, so follow-up questions and exports are free. After each run, the actual amount billed is reported back (including when BigQuery served the query from its 24-hour cache at no cost). The preview budget defaults to ~60,000 characters (sized to fit typical MCP client limits) and can be changed with the `MAX_RESULT_CHARS` environment variable (e.g. `-e MAX_RESULT_CHARS=200000`).
 
+Two more environment variables set hard limits:
+
+- `MAX_GB_PER_QUERY` (default `500`): the cost estimate refuses queries that would scan more than this many GB. Each run is also sent to BigQuery with `maximumBytesBilled` set from its estimate (plus BigQuery's 10 MB minimum per table), so BigQuery stops a job without charge if it would bill more than the estimate allows. Jobs carry the label `tool: orion-mcp`, which you can filter on in the Google Cloud billing export.
+- `MAX_DOWNLOAD_ROWS` (default `1000000`): results with more rows are not downloaded into the R session. The query is still billed; aggregate or filter it, or use `orion_query_to_table` to keep the result in BigQuery.
+
 The model, and so the LLM provider, sees the table schemas, the SQL, and a size-capped preview of each result, as well as the output of `orion_result_summary`, `orion_result_count` and `orion_result_slice`. The full result stays in the server's R session and in the files you export. The MCP server runs in an isolated Docker container with no access to your file system. The only information passed to the container is your Google Cloud credentials, used to authenticate with BigQuery via Application Default Credentials (ADC).
 
 You can browse schema metadata without a Google Cloud account.

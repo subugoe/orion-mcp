@@ -138,7 +138,10 @@ mcp_server(
         "again with the new SQL before presenting a cost estimate or ",
         "running it. Never reuse a previous cost estimate for modified ",
         "SQL. If the estimate exceeds 100 GB, highlight this prominently ",
-        "and strongly recommend the user confirm."
+        "and strongly recommend the user confirm. Queries above the server ",
+        "limit (MAX_GB_PER_QUERY, default 500 GB) are refused. The run is ",
+        "capped at the estimated bytes, so BigQuery cannot bill more than ",
+        "the estimate allows."
       ),
       arguments = list(
         query = type_string(glue(
@@ -166,6 +169,9 @@ mcp_server(
         "or orion_export_result to save it to a file. All of these are ",
         "free: they use the data already in the R session and never ",
         "re-query BigQuery. ",
+        "Results above MAX_DOWNLOAD_ROWS (default 1,000,000 rows) are not ",
+        "downloaded; the query is still billed. For results that large, ",
+        "aggregate or filter in SQL, or use orion_query_to_table. ",
         "SQL rules: ",
         "- Never use SELECT * — name only the columns needed to minimise ",
         "bytes scanned. ",
@@ -360,7 +366,10 @@ mcp_server(
         "results as JSON. ",
         "PREREQUISITE: orion_estimate_query_cost MUST have been called for ",
         "this exact SQL AND the user must have explicitly confirmed they ",
-        "want to proceed. Returns the file path, format, and row/column ",
+        "want to proceed. Results above MAX_DOWNLOAD_ROWS (default ",
+        "1,000,000 rows) are not downloaded; the query is still billed, so ",
+        "for results that large use orion_query_to_table instead. ",
+        "Returns the file path, format, and row/column ",
         "count — not the data itself. The response says whether the export ",
         "folder is mounted to the host; if it is not, relay the warning to ",
         "the user so they can add the volume mount before the file is lost ",
