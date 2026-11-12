@@ -97,7 +97,9 @@ BigQuery bills by bytes scanned, not rows returned. The cost estimate uses the a
 
 The container is isolated from your file system. When you ask Claude to export query results, files are written to `/data/exports` **inside the container**; the second `-v` line above maps that folder to `~/Downloads/orion-exports` on your machine, so exports appear there instantly. You can use any directory you like — but without this mount, exported files are lost when the container stops (the export tool and the *"check my setup"* health check will both warn you if the mount is missing).
 
-Exports are always written directly into the export folder: a requested filename is reduced to its bare name, its extension is set to the format written (`.csv` for flat results, `.json` for nested ones), and an existing file is not overwritten; a number is appended instead (`results_1.csv`).
+Each export of a query result comes with a second file of the same name ending in `.sql` (for example `results.csv` and `results.sql`). It holds the SQL that produced the data, with a header comment giving the date the query ran, the rows returned and the GB billed, so you can cite the query in a methods section or run it again later.
+
+Exports are always written directly into the export folder: a requested filename is reduced to its bare name, its extension is set to the format written (`.csv` for flat results, `.json` for nested ones), and an existing file is not overwritten; a number is appended instead (`results_1.csv` and `results_1.sql`).
 
 To change the in-container export path, set the `EXPORT_DIR` environment variable (e.g. `-e EXPORT_DIR=/tmp/exports`).
 

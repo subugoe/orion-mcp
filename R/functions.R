@@ -449,9 +449,13 @@ run_capped_job <- function(sql, gate, ...) {
   job
 }
 
+job_gb_billed <- function(query_stats) {
+  round(as.numeric(query_stats$totalBytesBilled %||% 0) / 1e9, 3)
+}
+
 job_billing_note <- function(query_stats) {
   cache_hit <- isTRUE(query_stats$cacheHit)
-  gb_billed <- round(as.numeric(query_stats$totalBytesBilled %||% 0) / 1e9, 3)
+  gb_billed <- job_gb_billed(query_stats)
 
   if (cache_hit) {
     glue(
@@ -468,6 +472,7 @@ execute_bq_query <- function(sql) {
   job <- run_capped_job(sql, gate)
 
   meta <- bq_job_meta(job)
+  run_at <- Sys.time()
   query_stats <- meta$statistics$query
   billing_note <- job_billing_note(query_stats)
 
@@ -479,8 +484,16 @@ execute_bq_query <- function(sql) {
   list(
     result = result,
     cache_hit = isTRUE(query_stats$cacheHit),
-    billing_note = billing_note
+    billing_note = billing_note,
+    run_at = run_at,
+    gb_billed = job_gb_billed(query_stats)
   )
+}
+
+# Store a query result together with the SQL and run details.
+store_run <- function(run, query) {
+  store_result(run$result, sql = query, run_at = run$run_at,
+               gb_billed = run$gb_billed)
 }
 
 # ---- Stored results ---------------------------------------------------------
@@ -514,16 +527,29 @@ stored_result_names <- function() {
   stored[order(map_int(stored, result_number))]
 }
 
-store_result <- function(df, max_results = stored_results_limit()) {
+# Name -> list(sql, run_at, gb_billed) for each stored result, written next
+# to exports so a file records the query that produced it.
+results_meta <- new.env(parent = emptyenv())
+
+store_result <- function(df, sql = NULL, run_at = Sys.time(), gb_billed = NULL,
+                         max_results = stored_results_limit()) {
   result_counter <<- result_counter + 1L
   name <- as.character(glue("q{result_counter}"))
   assign(name, df, envir = results_env)
+  if (!is.null(sql)) {
+    assign(name, list(sql = sql, run_at = run_at, gb_billed = gb_billed),
+           envir = results_meta)
+  }
 
   stored <- stored_result_names()
   old <- stored[map_int(stored, result_number) <= result_counter - max(1, max_results)]
   rm(list = old, envir = results_env)
+  rm(list = intersect(old, ls(results_meta)), envir = results_meta)
   name
 }
+
+# NULL for results stored without a query (only in tests).
+get_result_meta <- function(name) get0(name, envir = results_meta, inherits = FALSE)
 
 get_result <- function(name) {
   if (!exists(name, envir = results_env, inherits = FALSE)) {
@@ -594,7 +620,7 @@ render_rows <- function(df, budget = MAX_RESULT_CHARS) {
 orion_run_bq_query <- function(query) {
   run <- execute_bq_query(query)
   result <- run$result
-  name <- store_result(result)
+  name <- store_run(run, query)
   rendered <- render_rows(result)
 
   size_note <- if (rendered$truncated) {
@@ -812,8 +838,10 @@ export_mount_note <- function() {
 # The filename comes from the model, so it is reduced to a bare name inside
 # `dir` (no "../" or absolute paths), given the extension of the format that
 # is actually written, and never overwrites an earlier export: a counter is
-# appended instead (results.csv, results_1.csv, ...).
-export_path <- function(filename, ext, dir = EXPORT_DIR) {
+# appended instead (results.csv, results_1.csv, ...). `also` lists the
+# extensions of companion files (the .sql sidecar) that must be free too,
+# so the data file and its sidecar always share a name.
+export_path <- function(filename, ext, dir = EXPORT_DIR, also = character()) {
   stem <- if (is.null(filename)) "" else {
     filename |>
       basename() |>
@@ -823,21 +851,41 @@ export_path <- function(filename, ext, dir = EXPORT_DIR) {
     stem <- glue("orion_export_{format(Sys.time(), '%Y%m%d_%H%M%S')}")
   }
 
+  taken <- function(candidate) {
+    any(file.exists(file.path(dir, glue("{candidate}.{c(ext, also)}"))))
+  }
   candidate <- stem
   i <- 0L
-  while (file.exists(file.path(dir, glue("{candidate}.{ext}")))) {
+  while (taken(candidate)) {
     i <- i + 1L
     candidate <- glue("{stem}_{i}")
   }
   file.path(dir, glue("{candidate}.{ext}"))
 }
 
-write_export <- function(result, filename = NULL) {
+# The SQL that produced an export, with a header comment on when it ran,
+# what it returned and what it cost, so the file can be cited and rerun.
+sql_sidecar_text <- function(meta, n_rows, data_file) {
+  run_at <- format(meta$run_at, "%Y-%m-%d %H:%M:%S UTC", tz = "UTC")
+  gb <- if (is.null(meta$gb_billed)) "unknown" else format(meta$gb_billed, scientific = FALSE)
+  c(
+    "-- Query run on Google BigQuery through orion-mcp.",
+    glue("-- Run at: {run_at}"),
+    glue("-- Rows returned: {n_rows}"),
+    glue("-- GB billed: {gb}"),
+    glue("-- Data file: {data_file}"),
+    "",
+    meta$sql
+  )
+}
+
+write_export <- function(result, filename = NULL, meta = NULL) {
   nested <- has_nested(result)
   ext <- if (nested) "json" else "csv"
+  with_sql <- !is.null(meta$sql)
 
   dir.create(EXPORT_DIR, showWarnings = FALSE, recursive = TRUE)
-  path <- export_path(filename, ext)
+  path <- export_path(filename, ext, also = if (with_sql) "sql" else character())
 
   if (nested) {
     write(toJSON(result, auto_unbox = TRUE, pretty = TRUE), path)
@@ -845,8 +893,24 @@ write_export <- function(result, filename = NULL) {
     write_csv(result, path)
   }
 
+  sql_path <- NULL
+  if (with_sql) {
+    sql_path <- str_replace(path, "\\.[a-z]+$", ".sql")
+    writeLines(sql_sidecar_text(meta, nrow(result), basename(path)), sql_path)
+  }
+
   renamed <- !is.null(filename) && basename(path) != filename
-  list(path = path, format = ext, renamed = renamed)
+  list(path = path, format = ext, renamed = renamed, sql_path = sql_path)
+}
+
+# Mentions the .sql file in the export message, if one was written.
+export_sql_note <- function(export) {
+  if (is.null(export$sql_path)) return("")
+  glue(
+    "The SQL, with the run date, rows returned and GB billed, was saved ",
+    "next to it as {export$sql_path}, for citing in a methods section or ",
+    "rerunning later. "
+  )
 }
 
 # Tells the model when the file name differs from the one it asked for.
@@ -861,10 +925,11 @@ export_rename_note <- function(export, filename) {
 
 orion_export_result <- function(name, filename = NULL) {
   result <- get_result(name)
-  export <- write_export(result, filename)
+  export <- write_export(result, filename, get_result_meta(name))
 
   list(
     path = export$path,
+    sql_path = export$sql_path,
     format = export$format,
     rows = nrow(result),
     columns = ncol(result),
@@ -874,21 +939,25 @@ orion_export_result <- function(name, filename = NULL) {
       "{ncol(result)} columns) to {export$path} (a path inside the ",
       "container) without touching BigQuery — this cost nothing. ",
       "{export_rename_note(export, filename)}",
+      "{export_sql_note(export)}",
       "{export_mount_note()} ",
       "When presenting this to the user, say in plain language what was ",
-      "exported and where the file appears on their machine."
+      "exported and where the files appear on their machine."
     )
-  ) |> toJSON(auto_unbox = TRUE, pretty = TRUE)
+  ) |>
+    compact() |>  # drops sql_path when no .sql file was written
+    toJSON(auto_unbox = TRUE, pretty = TRUE)
 }
 
 orion_export_bq_query <- function(query, filename = NULL) {
   run <- execute_bq_query(query)
   result <- run$result
-  name <- store_result(result)
-  export <- write_export(result, filename)
+  name <- store_run(run, query)
+  export <- write_export(result, filename, get_result_meta(name))
 
   list(
     path = export$path,
+    sql_path = export$sql_path,
     format = export$format,
     rows = nrow(result),
     columns = ncol(result),
@@ -897,16 +966,19 @@ orion_export_bq_query <- function(query, filename = NULL) {
       "Exported {nrow(result)} rows x {ncol(result)} columns to ",
       "{export$path} (a path inside the container). {run$billing_note} ",
       "{export_rename_note(export, filename)}",
+      "{export_sql_note(export)}",
       "{export_mount_note()} ",
       "The result is also stored in the R session as '{name}' for the ",
       "analysis tools. ",
       "SQL: {normalize_sql(query)}. ",
       "When presenting this to the user, say in plain language what was ",
-      "exported, where the file appears on their machine, and briefly ",
+      "exported, where the files appear on their machine, and briefly ",
       "explain what the query did — the user may be learning SQL and ",
       "BigQuery."
     )
-  ) |> toJSON(auto_unbox = TRUE, pretty = TRUE)
+  ) |>
+    compact() |>
+    toJSON(auto_unbox = TRUE, pretty = TRUE)
 }
 
 # ---- Writing to BigQuery ------------------------------------------------------

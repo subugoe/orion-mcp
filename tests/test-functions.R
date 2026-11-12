@@ -433,6 +433,70 @@ test_that("exports never overwrite an existing file", {
   expect_match(second$message, "was saved as 'twice_1.csv'")
 })
 
+test_that("exports of query results carry a .sql file with the query", {
+  sql <- "SELECT doi,\n  year -- keep comments\nFROM `p.d.t`\nWHERE note = 'a;b'"
+  run_at <- as.POSIXct("2026-11-12 10:30:00", tz = "UTC")
+  name <- store_result(
+    tibble(doi = c("10.1/a", "10.1/b"), year = 2024:2025),
+    sql = sql, run_at = run_at, gb_billed = 1.234
+  )
+  out <- fromJSON(orion_export_result(name, "../cited.json"), simplifyVector = FALSE)
+  expect_equal(out$path, file.path(EXPORT_DIR, "cited.csv"))
+  expect_equal(out$sql_path, file.path(EXPORT_DIR, "cited.sql"))
+  expect_true(file.exists(out$sql_path))
+  expect_match(out$message, "cited.sql", fixed = TRUE)
+
+  text <- read_file(out$sql_path)
+  expect_true(str_detect(text, fixed(sql)))
+  expect_match(text, "-- Run at: 2026-11-12 10:30:00 UTC", fixed = TRUE)
+  expect_match(text, "-- Rows returned: 2", fixed = TRUE)
+  expect_match(text, "-- GB billed: 1.234", fixed = TRUE)
+  expect_match(text, "-- Data file: cited.csv", fixed = TRUE)
+
+  # The same name again: both files get the counter, nothing is overwritten
+  again <- fromJSON(orion_export_result(name, "cited.csv"), simplifyVector = FALSE)
+  expect_equal(basename(again$path), "cited_1.csv")
+  expect_equal(basename(again$sql_path), "cited_1.sql")
+  expect_match(read_file(again$sql_path), "-- Data file: cited_1.csv", fixed = TRUE)
+
+  # A leftover .sql file alone also takes the name, so pairs stay matched
+  writeLines("old", file.path(EXPORT_DIR, "pair.sql"))
+  pair <- fromJSON(orion_export_result(name, "pair.csv"), simplifyVector = FALSE)
+  expect_equal(basename(pair$path), "pair_1.csv")
+  expect_equal(basename(pair$sql_path), "pair_1.sql")
+  expect_equal(readLines(file.path(EXPORT_DIR, "pair.sql")), "old")
+
+  nested <- store_result(
+    tibble(doi = "10.1/a", authors = list(list("A"))),
+    sql = "SELECT doi, authors FROM `p.d.t`", run_at = run_at, gb_billed = 0
+  )
+  out_nested <- fromJSON(orion_export_result(nested, "nested_q"), simplifyVector = FALSE)
+  expect_equal(basename(out_nested$path), "nested_q.json")
+  expect_equal(basename(out_nested$sql_path), "nested_q.sql")
+  expect_match(read_file(out_nested$sql_path), "-- GB billed: 0\n", fixed = TRUE)
+
+  # Results stored without a query get no .sql file
+  plain <- fromJSON(orion_export_result(store_result(tibble(x = 1)), "plain.csv"),
+                    simplifyVector = FALSE)
+  expect_null(plain$sql_path)
+  expect_false(file.exists(file.path(EXPORT_DIR, "plain.sql")))
+})
+
+test_that("stored results keep their SQL and run details until dropped", {
+  run_at <- Sys.time()
+  first <- store_result(tibble(x = 1), sql = "SELECT 1 AS x", run_at = run_at,
+                        gb_billed = 0.5, max_results = 2)
+  expect_equal(get_result_meta(first),
+               list(sql = "SELECT 1 AS x", run_at = run_at, gb_billed = 0.5))
+  store_result(tibble(x = 2), sql = "SELECT 2 AS x", max_results = 2)
+  store_result(tibble(x = 3), sql = "SELECT 3 AS x", max_results = 2)
+  expect_null(get_result_meta(first))
+
+  expect_equal(job_gb_billed(list(totalBytesBilled = "1500000000")), 1.5)
+  expect_equal(job_gb_billed(list(cacheHit = TRUE)), 0)
+  expect_equal(job_gb_billed(NULL), 0)
+})
+
 test_that("SELECT * guard blocks wildcards but not regex literals or COUNT(*)", {
   guard <- function(sql) assert_read_only_sql(sql) |> assert_no_select_star()
 
