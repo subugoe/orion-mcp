@@ -258,6 +258,29 @@ test_that("render_rows handles zero-row results", {
   expect_false(rendered$truncated)
 })
 
+test_that("render_rows serialises only rows that can fit the budget", {
+  # toJSON() cannot serialise an environment, so rendering would fail if
+  # the last row were serialised at all.
+  nested <- tibble(id = 1:1000, x = c(as.list(1:999), list(new.env())))
+  rendered <- render_rows(nested, budget = 300)
+  expect_true(rendered$truncated)
+  expect_gt(rendered$rows_shown, 0)
+  expect_lte(nchar(rendered$text), 300)
+
+  # truncated is judged against the full row count, not the serialised part
+  flat <- tibble(a = rep("x", 100))
+  rendered <- render_rows(flat, budget = 50)
+  expect_true(rendered$truncated)
+  expect_lte(nchar(rendered$text), 50)
+  expect_false(render_rows(flat, budget = 1000)$truncated)
+
+  # Empty strings are one character per row; the cap must not cut them early
+  empty <- tibble(a = rep("", 10))
+  rendered <- render_rows(empty, budget = 12)
+  expect_equal(rendered$rows_shown, 10)
+  expect_false(rendered$truncated)
+})
+
 test_that("result summary reports types, missing and distinct correctly", {
   df <- tibble(
     ror = c(sprintf("r%03d", 1:100), rep(NA, 40)),

@@ -518,6 +518,13 @@ has_nested <- function(df) any(map_lgl(df, is.list))
 # at `budget` characters, cutting only at complete rows.
 render_rows <- function(df, budget = MAX_RESULT_CHARS) {
   nested <- has_nested(df)
+  total_rows <- nrow(df)
+  # Serialise only the rows that could possibly fit, so a large result is
+  # cheap to preview. A JSON line takes at least three characters ("{}" and
+  # a newline); a CSV line at least one, because readr writes a lone empty
+  # string as an empty line.
+  max_rows <- if (nested) budget %/% 3 else budget
+  df <- head(df, min(total_rows, max_rows))
 
   if (nested) {
     header <- NULL
@@ -542,7 +549,7 @@ render_rows <- function(df, budget = MAX_RESULT_CHARS) {
   list(
     text = str_flatten(c(header, body[seq_len(keep)]), "\n"),
     rows_shown = keep,
-    truncated = keep < nrow(df),
+    truncated = keep < total_rows,
     format = if (nested) "json" else "csv"
   )
 }
