@@ -8,7 +8,11 @@
 
 suppressPackageStartupMessages({
   library(testthat)
-  library(tidyverse)
+  library(dplyr)
+  library(purrr)
+  library(stringr)
+  library(readr)
+  library(tibble)
   library(glue)
   library(jsonlite)
   # Optional: only needed by the destination-table tests, which skip
@@ -47,6 +51,157 @@ test_that("schema browsing tools work against schema metadata", {
   expect_equal(schema$name, c("doi", "year"))
 
   expect_error(orion_get_db_schema("p1", "d1", "nope"), "Not found")
+})
+
+test_that("schema tools return a clear message when no schema is loaded", {
+  full <- schema_data
+  assign("schema_data", full[0, ], envir = globalenv())
+  withr::defer(assign("schema_data", full, envir = globalenv()))
+
+  msgs <- c(
+    orion_list_datasets(),
+    orion_list_tables("p1", "d1"),
+    orion_get_db_schema("p1", "d1", "t1")
+  )
+  expect_length(msgs, 3)
+  for (m in msgs) {
+    expect_match(m, "No schema metadata is loaded")
+    expect_match(m, "orion_health_check")
+  }
+
+  # An empty tibble with no columns at all (empty SCHEMA_DIR) behaves the same
+  assign("schema_data", tibble(), envir = globalenv())
+  expect_match(orion_list_datasets(), "orion_health_check")
+})
+
+test_that("load_schema_data skips unreadable files instead of failing", {
+  dir <- withr::local_tempdir()
+  expect_equal(nrow(load_schema_data(dir)), 0)
+
+  writeLines(
+    '{"project":"p","dataset":"d","dataset_description":"x","table":"t","description":"y"}',
+    file.path(dir, "collection_info_ok.jsonl")
+  )
+  writeLines("{ this is not json", file.path(dir, "collection_info_bad.jsonl"))
+  expect_message(loaded <- load_schema_data(dir), "Skipping unreadable")
+  expect_equal(loaded$table, "t")
+})
+
+# ---- refresh-schemas.sh (no network: the "API" is a local directory) -------
+
+refresh_script <- normalizePath("refresh-schemas.sh")
+good_line <- paste0(
+  '{"project":"p","dataset":"d","dataset_description":"x",',
+  '"table":"t","description":"y"}'
+)
+
+# Lay out a fake GitHub contents API under `root`. `files` maps file name to
+# content; a NULL content lists the file but does not create it (a failed
+# download). Returns the value for SCHEMA_API_URL.
+fake_schema_repo <- function(root, files) {
+  api_dir <- file.path(root, "api", "repos", "o", "r", "contents")
+  dir.create(api_dir, recursive = TRUE)
+  src <- file.path(root, "src")
+  dir.create(src)
+  listing <- map(names(files), \(n) {
+    list(name = n, download_url = paste0("file://", file.path(src, n)))
+  })
+  writeLines(toJSON(listing, auto_unbox = TRUE), file.path(api_dir, "data"))
+  iwalk(files, \(content, n) {
+    if (!is.null(content)) writeLines(content, file.path(src, n))
+  })
+  paste0("file://", file.path(root, "api"))
+}
+
+run_refresh <- function(api_url, data_dir, args = character(), env = character()) {
+  out <- suppressWarnings(system2(
+    "sh", c(refresh_script, args),
+    stdout = TRUE, stderr = TRUE,
+    env = c(
+      paste0("SCHEMA_API_URL=", api_url),
+      "SCHEMA_REPO=o/r", "SCHEMA_PATH=data",
+      paste0("SCHEMA_DIR=", data_dir), env
+    )
+  ))
+  list(status = attr(out, "status") %||% 0L, output = out)
+}
+
+has_refresh_tools <- nzchar(Sys.which("curl")) && nzchar(Sys.which("jq"))
+
+test_that("refresh replaces the snapshot only when every file is valid", {
+  skip_if_not(has_refresh_tools, "curl and jq are needed")
+  root <- withr::local_tempdir()
+  data_dir <- file.path(root, "data")
+  dir.create(data_dir)
+  writeLines("old", file.path(data_dir, "collection_info_old.jsonl"))
+  writeLines("kept", file.path(data_dir, "collection_info_a.jsonl"))
+
+  api <- fake_schema_repo(file.path(root, "ok"), list(
+    collection_info_a.jsonl = good_line,
+    collection_info_b.jsonl = good_line
+  ))
+  res <- run_refresh(api, data_dir)
+  expect_equal(res$status, 0)
+  expect_setequal(
+    list.files(data_dir, all.files = TRUE, no.. = TRUE),
+    c("collection_info_a.jsonl", "collection_info_b.jsonl")
+  )
+  expect_equal(readLines(file.path(data_dir, "collection_info_a.jsonl")), good_line)
+})
+
+test_that("refresh keeps the snapshot and exits 0 when the source is unreachable", {
+  skip_if_not(has_refresh_tools, "curl and jq are needed")
+  data_dir <- withr::local_tempdir()
+  writeLines("snapshot", file.path(data_dir, "collection_info_a.jsonl"))
+
+  # Nothing listens on port 9
+  res <- run_refresh("http://127.0.0.1:9", data_dir, "--best-effort")
+  expect_equal(res$status, 0)
+  expect_equal(sum(grepl("Schema refresh failed", res$output)), 1)
+  expect_equal(readLines(file.path(data_dir, "collection_info_a.jsonl")), "snapshot")
+  expect_equal(list.files(data_dir, all.files = TRUE, no.. = TRUE), "collection_info_a.jsonl")
+
+  # The strict mode (image build) reports the same failure as an error
+  res <- run_refresh("http://127.0.0.1:9", data_dir)
+  expect_equal(res$status, 1)
+})
+
+test_that("refresh leaves the snapshot alone after a partial or invalid download", {
+  skip_if_not(has_refresh_tools, "curl and jq are needed")
+  root <- withr::local_tempdir()
+  data_dir <- file.path(root, "data")
+  dir.create(data_dir)
+  writeLines("snapshot", file.path(data_dir, "collection_info_a.jsonl"))
+
+  cases <- list(
+    missing_file = list(collection_info_a.jsonl = good_line, collection_info_b.jsonl = NULL),
+    empty_file = list(collection_info_a.jsonl = good_line, collection_info_b.jsonl = ""),
+    invalid_json = list(collection_info_a.jsonl = good_line, collection_info_b.jsonl = "{ nope"),
+    not_objects = list(collection_info_a.jsonl = good_line, collection_info_b.jsonl = "[1,2]"),
+    no_files = list(README.md = "x")
+  )
+  for (case in names(cases)) {
+    api <- fake_schema_repo(file.path(root, case), cases[[case]])
+    res <- run_refresh(api, data_dir, "--best-effort")
+    expect_equal(res$status, 0, label = case)
+    expect_match(paste(res$output, collapse = "\n"), "Schema refresh failed", label = case)
+    expect_equal(
+      list.files(data_dir, all.files = TRUE, no.. = TRUE),
+      "collection_info_a.jsonl",
+      label = case
+    )
+    expect_equal(readLines(file.path(data_dir, "collection_info_a.jsonl")), "snapshot", label = case)
+  }
+})
+
+test_that("SCHEMA_REFRESH=0 skips the network step", {
+  skip_if_not(has_refresh_tools, "curl and jq are needed")
+  data_dir <- withr::local_tempdir()
+  # Would fail loudly if the script tried to use it
+  res <- run_refresh("http://127.0.0.1:9", data_dir, "--best-effort", "SCHEMA_REFRESH=0")
+  expect_equal(res$status, 0)
+  expect_false(any(grepl("failed|Fetching", res$output)))
+  expect_match(res$output, "SCHEMA_REFRESH=0")
 })
 
 test_that("results are stored under stable names and retrievable", {

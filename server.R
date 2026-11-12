@@ -1,7 +1,11 @@
 suppressPackageStartupMessages({
   library(ellmer)
   library(mcptools)
-  library(tidyverse)
+  library(dplyr)
+  library(purrr)
+  library(stringr)
+  library(readr)
+  library(tibble)
   library(glue)
   library(jsonlite)
   library(bigrquery)

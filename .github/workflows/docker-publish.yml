@@ -6,6 +6,12 @@ on:
       - main
   pull_request:
   workflow_dispatch:
+  # Rebuild every day at 07:00 UTC, one hour after the ORION-DBs website
+  # refreshes its schema files (06:00 UTC), so the schema snapshot baked into
+  # the image is at most a day old. GitHub runs scheduled workflows only from
+  # the default branch; the build job also checks this explicitly.
+  schedule:
+    - cron: "0 7 * * *"
 
 env:
   REGISTRY: ghcr.io
@@ -14,19 +20,33 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
-    container: rocker/tidyverse:4.5.3
+    # Same base image and package snapshot as the Dockerfile; keep them in sync.
+    container: rocker/r-ver:4.5.3
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install test dependencies
-        run: Rscript -e 'if (!requireNamespace("bigrquery", quietly = TRUE)) install.packages("bigrquery")'
+      # curl and jq are used by refresh-schemas.sh, which the tests exercise
+      - name: Install system tools
+        run: apt-get update && apt-get install -y --no-install-recommends curl jq libuv1t64
+
+      - name: Install R packages
+        run: |
+          install2.r --error --skipinstalled \
+            --repos https://p3m.dev/cran/__linux__/noble/2026-09-01 \
+            testthat dplyr purrr stringr readr tibble glue jsonlite \
+            gargle bigrquery
 
       - name: Run unit tests
         run: Rscript tests/test-functions.R
 
   build:
-    if: github.event_name != 'pull_request'
+    # Pull requests are only tested. Scheduled runs build from the default
+    # branch only.
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.event_name != 'schedule' ||
+        github.ref_name == github.event.repository.default_branch)
     needs: test
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -68,6 +88,13 @@ jobs:
         with:
           context: .
           platforms: ${{ matrix.platform }}
+          # A new value each run, so the layer that downloads the schema files
+          # is not served from the build cache
+          build-args: |
+            SCHEMA_SNAPSHOT=${{ github.run_id }}-${{ github.run_attempt }}
+          # Avoids the GitHub API rate limit for unauthenticated requests
+          secrets: |
+            github_token=${{ secrets.GITHUB_TOKEN }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha

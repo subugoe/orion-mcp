@@ -18,6 +18,8 @@ Two more environment variables set hard limits:
 
 The model, and so the LLM provider, sees the table schemas, the SQL, and a size-capped preview of each result, as well as the output of `orion_result_summary`, `orion_result_count` and `orion_result_slice`. The full result stays in the server's R session and in the files you export. The MCP server runs in an isolated Docker container with no access to your file system. The only file passed to the container is your Application Default Credentials file (`application_default_credentials.json`, mounted read-only), used to authenticate with BigQuery.
 
+Schema metadata is part of the image. The image is rebuilt daily from the schema files that the ORION-DBs website publishes, and at start-up the server tries to download the current files. If that download fails, or is incomplete, the files in the image are used and one line is printed to the container's stderr. Set `SCHEMA_REFRESH=0` (e.g. `-e SCHEMA_REFRESH=0`) to skip the download; the server then starts faster and works offline with the schemas from the image. `SCHEMA_REPO` and `SCHEMA_PATH` change where the files come from.
+
 You can browse schema metadata without a Google Cloud account.
 
 ## Installation
@@ -142,6 +144,8 @@ The server logic lives in `R/functions.R`; `server.R` handles authentication and
 ```bash
 Rscript tests/test-functions.R
 ```
+
+The tests need the R packages `testthat`, `dplyr`, `purrr`, `stringr`, `readr`, `tibble`, `glue`, `jsonlite` and `bigrquery`, plus `curl` and `jq` for the schema refresh script.
 
 The same tests run in CI on every pull request and gate the image build, so a regression cannot reach the published image. They cover everything except the BigQuery round-trip itself, which the built-in health check (*"check my setup"*) verifies at install time.
 

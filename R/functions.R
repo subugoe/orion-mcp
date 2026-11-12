@@ -2,7 +2,8 @@
 # auth and starts the MCP server) and by tests/test-functions.R (which
 # exercises everything that doesn't need BigQuery).
 #
-# Expects tidyverse, glue, jsonlite, and bigrquery to be attached.
+# Expects dplyr, purrr, stringr, readr, tibble, glue, jsonlite and bigrquery
+# to be attached.
 
 SCHEMA_DIR <- Sys.getenv("SCHEMA_DIR", "/data")
 EXPORT_DIR <- Sys.getenv("EXPORT_DIR", "/data/exports")
@@ -19,15 +20,39 @@ read_jsonl <- function(path) {
   stream_in(con, verbose = FALSE)
 }
 
+# A file that cannot be read is skipped with a warning on stderr: one bad
+# file must not stop the server or hide the other collections.
 load_schema_data <- function(dir = SCHEMA_DIR) {
   list.files(dir, full.names = TRUE, pattern = "\\.jsonl$") |>
-    map(read_jsonl) |>
+    map(\(path) {
+      tryCatch(
+        read_jsonl(path),
+        error = function(e) {
+          message(glue("Skipping unreadable schema file {path}: {conditionMessage(e)}"))
+          NULL
+        }
+      )
+    }) |>
+    compact() |>
     list_rbind()
+}
+
+# Returned by the schema tools when no schema files could be loaded, so the
+# model can tell the user what is wrong instead of failing on a missing column.
+no_schema_message <- function() {
+  glue(
+    "No schema metadata is loaded, so datasets and tables cannot be listed. ",
+    "This is a setup problem, not a missing dataset. Call orion_health_check ",
+    "for the cause and its fix (usually: the image has no schema files and ",
+    "the start-up download failed; check the container's network access or ",
+    "SCHEMA_REPO and restart it)."
+  )
 }
 
 # ---- Schema browsing ---------------------------------------------------------
 
 orion_list_datasets <- function() {
+  if (nrow(schema_data) == 0) return(no_schema_message())
   schema_data |>
     summarise(
       dataset_description = first(dataset_description),
@@ -38,6 +63,7 @@ orion_list_datasets <- function() {
 }
 
 orion_list_tables <- function(project, dataset) {
+  if (nrow(schema_data) == 0) return(no_schema_message())
   schema_data |>
     filter(.data$project == .env$project, .data$dataset == .env$dataset) |>
     select(table, description) |>
@@ -45,6 +71,7 @@ orion_list_tables <- function(project, dataset) {
 }
 
 orion_get_db_schema <- function(project, dataset, table) {
+  if (nrow(schema_data) == 0) return(no_schema_message())
   result <- schema_data |>
     filter(
       .data$project == .env$project,
@@ -910,9 +937,10 @@ orion_health_check <- function() {
       status = "failed",
       detail = "No schema metadata loaded — schema browsing will not work.",
       fix = glue(
-        "The container fetches schemas from GitHub at startup. Check its ",
-        "network access and the SCHEMA_REPO/SCHEMA_PATH environment ",
-        "variables, then restart the container."
+        "The image carries a schema snapshot from build time and refreshes ",
+        "it from GitHub at start-up (unless SCHEMA_REFRESH=0). Pull the ",
+        "newest image, or check the container's network access and the ",
+        "SCHEMA_REPO/SCHEMA_PATH environment variables, then restart it."
       )
     )
   }
@@ -932,7 +960,8 @@ orion_health_check <- function() {
       detail = "No Google Cloud credentials found — queries will not work.",
       fix = glue(
         "Run 'gcloud auth application-default login' on the host machine ",
-        "and mount ~/.config/gcloud into the container (see README). ",
+        "and mount application_default_credentials.json into the container ",
+        "(see README). ",
         "Schema browsing still works without credentials."
       )
     )
