@@ -629,6 +629,71 @@ test_that("large results are not downloaded", {
   })
 })
 
+# ---- server.R over stdio (no credentials, no schemas, no network) ----------
+
+has_server_pkgs <- requireNamespace("ellmer", quietly = TRUE) &&
+  requireNamespace("mcptools", quietly = TRUE)
+
+# Starts server.R, sends JSON-RPC lines on stdin and returns the parsed
+# replies. GOOGLE_APPLICATION_CREDENTIALS points at a missing file, so gargle
+# finds no credentials and makes no request; SCHEMA_DIR is an empty folder.
+run_server <- function(requests) {
+  dir <- withr::local_tempdir()
+  input <- file.path(dir, "requests.jsonl")
+  output <- file.path(dir, "replies.jsonl")
+  initialize <- paste0(
+    '{"jsonrpc":"2.0","id":0,"method":"initialize","params":',
+    '{"protocolVersion":"2025-06-18","capabilities":{},',
+    '"clientInfo":{"name":"test","version":"0"}}}'
+  )
+  # mcptools stops reading at end of input and drops lines it has not
+  # handled yet, so stdin stays open until the reply to a final sentinel
+  # request (id 999, an unknown method) has been written, or 30 s pass.
+  writeLines(
+    c(initialize, requests, '{"jsonrpc":"2.0","id":999,"method":"orion/sentinel"}'),
+    input
+  )
+  script <- glue(
+    "{{ cat {shQuote(input)}; i=0; ",
+    "while [ $i -lt 300 ] && ! grep -q '\"id\":999' {shQuote(output)} 2>/dev/null; ",
+    "do sleep 0.1; i=$((i+1)); done; }} | ",
+    "GOOGLE_APPLICATION_CREDENTIALS={shQuote(file.path(dir, 'no-adc.json'))} ",
+    "SCHEMA_DIR={shQuote(dir)} ",
+    "{shQuote(file.path(R.home('bin'), 'Rscript'))} server.R ",
+    "> {shQuote(output)} 2>/dev/null"
+  )
+  system2("sh", c("-c", shQuote(script)))
+  replies <- map(readLines(output), \(line) fromJSON(line, simplifyVector = FALSE))
+  set_names(replies, map_chr(replies, \(r) as.character(r$id)))
+}
+
+test_that("tools/list carries titles and read-only/destructive hints", {
+  skip_if_not(has_server_pkgs, "ellmer and mcptools are needed")
+  replies <- run_server('{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
+  tools <- replies[["1"]]$result$tools
+  expect_length(tools, 13)
+  ann <- set_names(map(tools, "annotations"), map_chr(tools, "name"))
+
+  expect_true(all(map_lgl(ann, \(a) is.character(a$title) && nzchar(a$title))))
+
+  read_only <- c(
+    "orion_health_check", "orion_list_datasets", "orion_list_tables",
+    "orion_get_db_schema", "orion_estimate_query_cost",
+    "orion_result_summary", "orion_result_count", "orion_result_slice"
+  )
+  for (nm in read_only) expect_true(ann[[nm]]$readOnlyHint, label = nm)
+
+  writing <- setdiff(names(ann), read_only)
+  for (nm in writing) {
+    expect_false(ann[[nm]]$readOnlyHint, label = nm)
+    expect_identical(
+      ann[[nm]]$destructiveHint,
+      nm %in% c("orion_save_result_to_bq", "orion_query_to_table"),
+      label = nm
+    )
+  }
+})
+
 test_that("health check reports per-layer status without credentials", {
   health <- fromJSON(orion_health_check(), simplifyVector = FALSE)
 

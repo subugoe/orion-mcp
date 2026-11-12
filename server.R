@@ -57,6 +57,9 @@ local({
 mcp_server(
   # Tools run in this process; no need for mcptools' external R-session routing.
   session_tools = FALSE,
+  # Each tool carries a title and read-only/destructive hints so clients can
+  # label tools and decide which need confirmation. mcptools (>= 1.0.0)
+  # passes them through in tools/list; tests/test-functions.R checks this.
   tools = list(
     tool(
       orion_health_check,
@@ -69,6 +72,10 @@ mcp_server(
         "query fails in a way that suggests a setup problem (missing ",
         "credentials, billing project, network). Walk the user through ",
         "each failed check's fix step by step."
+      ),
+      annotations = tool_annotations(
+        title = "Check setup",
+        read_only_hint = TRUE
       )
     ),
     tool(
@@ -82,6 +89,10 @@ mcp_server(
         "IMPORTANT: Use the dataset descriptions as-is — do NOT infer ",
         "recency from dates embedded in dataset names. 'instant' means the ",
         "most recent snapshot. For more info see <https://orion-dbs.community/>"
+      ),
+      annotations = tool_annotations(
+        title = "List datasets",
+        read_only_hint = TRUE
       )
     ),
     tool(
@@ -96,6 +107,10 @@ mcp_server(
       arguments = list(
         project = type_string("The GCP project ID"),
         dataset = type_string("The BigQuery dataset name")
+      ),
+      annotations = tool_annotations(
+        title = "List tables",
+        read_only_hint = TRUE
       )
     ),
     tool(
@@ -116,6 +131,10 @@ mcp_server(
         project = type_string("The GCP project ID"),
         dataset = type_string("The BigQuery dataset name"),
         table = type_string("The BigQuery table name")
+      ),
+      annotations = tool_annotations(
+        title = "Get table schema",
+        read_only_hint = TRUE
       )
     ),
     tool(
@@ -154,6 +173,10 @@ mcp_server(
           "The fully-qualified BigQuery SQL query to dry-run ",
           "(include project.dataset.table in the query itself)"
         ))
+      ),
+      annotations = tool_annotations(
+        title = "Estimate query cost (dry run)",
+        read_only_hint = TRUE
       )
     ),
     tool(
@@ -201,6 +224,11 @@ mcp_server(
           "The fully-qualified BigQuery SQL query to execute ",
           "(include project.dataset.table in the query itself)"
         ))
+      ),
+      annotations = tool_annotations(
+        title = "Run query",
+        read_only_hint = FALSE,
+        destructive_hint = FALSE
       )
     ),
     tool(
@@ -218,6 +246,10 @@ mcp_server(
           "Name of the stored result (e.g. 'q1'), as reported by ",
           "orion_run_bq_query"
         ))
+      ),
+      annotations = tool_annotations(
+        title = "Summarise stored result",
+        read_only_hint = TRUE
       )
     ),
     tool(
@@ -236,6 +268,10 @@ mcp_server(
           "Comma-separated column names to group by ",
           "(e.g. 'year' or 'institution,year')"
         ))
+      ),
+      annotations = tool_annotations(
+        title = "Count groups in stored result",
+        read_only_hint = TRUE
       )
     ),
     tool(
@@ -279,6 +315,10 @@ mcp_server(
           "Maximum rows to return (default 50)",
           required = FALSE
         )
+      ),
+      annotations = tool_annotations(
+        title = "Show rows of stored result",
+        read_only_hint = TRUE
       )
     ),
     tool(
@@ -306,6 +346,11 @@ mcp_server(
           ),
           required = FALSE
         )
+      ),
+      annotations = tool_annotations(
+        title = "Export stored result to file",
+        read_only_hint = FALSE,
+        destructive_hint = FALSE
       )
     ),
     tool(
@@ -332,6 +377,11 @@ mcp_server(
           "Replace the table if it already exists (default FALSE)",
           required = FALSE
         )
+      ),
+      annotations = tool_annotations(
+        title = "Save stored result to BigQuery",
+        read_only_hint = FALSE,
+        destructive_hint = TRUE
       )
     ),
     tool(
@@ -362,6 +412,11 @@ mcp_server(
           "Replace the table if it already exists (default FALSE)",
           required = FALSE
         )
+      ),
+      annotations = tool_annotations(
+        title = "Run query into BigQuery table",
+        read_only_hint = FALSE,
+        destructive_hint = TRUE
       )
     ),
     tool(
@@ -401,6 +456,11 @@ mcp_server(
           ),
           required = FALSE
         )
+      ),
+      annotations = tool_annotations(
+        title = "Run query and export to file",
+        read_only_hint = FALSE,
+        destructive_hint = FALSE
       )
     )
   )
