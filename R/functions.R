@@ -328,11 +328,31 @@ assert_read_only_sql <- function(sql) {
   invisible(clean)
 }
 
+# Expects SQL with literals and comments blanked (the output of
+# assert_read_only_sql), so '.*' inside a regex literal does not count.
+# Covers SELECT [ALL|DISTINCT] [AS STRUCT|AS VALUE] * and table.*;
+# COUNT(*) is not a column wildcard and stays allowed.
+assert_no_select_star <- function(sql_no_strings) {
+  pattern <- regex(
+    "SELECT\\s+(ALL\\s+|DISTINCT\\s+)?(AS\\s+(STRUCT|VALUE)\\s+)?\\*|\\w+\\.\\*",
+    ignore_case = TRUE
+  )
+  if (str_detect(sql_no_strings, pattern)) {
+    stop(glue(
+      "SELECT * and table.* are not allowed — specify only the columns ",
+      "needed to avoid scanning unnecessary data."
+    ))
+  }
+  invisible(TRUE)
+}
+
 orion_estimate_query_cost <- function(query) {
   billing <- Sys.getenv("BQ_BILLING_PROJECT")
   if (billing == "") stop("BQ_BILLING_PROJECT environment variable not set")
 
-  assert_read_only_sql(query)
+  # Checked here too, so the model learns about it before the user is asked
+  # to confirm a cost.
+  assert_read_only_sql(query) |> assert_no_select_star()
 
   stats <- bq_dry_run_stats(query, billing)
   # Rejected SQL never enters the dry-run cache, so it cannot be run.
@@ -382,17 +402,9 @@ validate_query <- function(sql) {
     ))
   }
 
-  # Also blanks string literals so SELECT * detection below doesn't
-  # false-positive on '.*' sequences inside regex patterns or quoted values.
-  sql_no_strings <- assert_read_only_sql(sql)
-
-  if (str_detect(sql_no_strings,
-                 regex("SELECT\\s+\\*|\\w+\\.\\*", ignore_case = TRUE))) {
-    stop(glue(
-      "SELECT * and table.* are not allowed — specify only the columns ",
-      "needed to avoid scanning unnecessary data."
-    ))
-  }
+  # Checked again at run time: this gate must not rely on how SQL got into
+  # the dry-run cache.
+  assert_read_only_sql(sql) |> assert_no_select_star()
 
   billing <- Sys.getenv("BQ_BILLING_PROJECT")
   if (billing == "") stop("BQ_BILLING_PROJECT environment variable not set")

@@ -376,23 +376,43 @@ test_that("exports never overwrite an existing file", {
   expect_match(second$message, "was saved as 'twice_1.csv'")
 })
 
-test_that("SELECT * guard blocks wildcards but not regex literals", {
-  strip <- function(sql) {
-    sql |>
-      str_replace_all("'[^']*'", "''") |>
-      str_replace_all('"[^"]*"', '""')
-  }
-  guard <- function(sql) {
-    str_detect(
-      strip(sql),
-      regex("SELECT\\s+\\*|\\w+\\.\\*", ignore_case = TRUE)
-    )
+test_that("SELECT * guard blocks wildcards but not regex literals or COUNT(*)", {
+  guard <- function(sql) assert_read_only_sql(sql) |> assert_no_select_star()
+
+  blocked <- c(
+    "SELECT t.* FROM t",
+    "select * from works",
+    "SELECT a, w.* FROM works w",
+    "SELECT DISTINCT * FROM t",
+    "SELECT ALL * FROM t",
+    "SELECT AS STRUCT * FROM t",
+    "SELECT AS VALUE * FROM t",
+    "select distinct as struct * from t",
+    "WITH x AS (SELECT * FROM t) SELECT a FROM x"
+  )
+  for (sql in blocked) {
+    expect_error(guard(sql), "SELECT \\* and table.\\* are not allowed", label = sql)
   }
 
-  expect_false(guard("SELECT doi FROM t WHERE REGEXP_CONTAINS(v, r'v2\\..*')"))
-  expect_true(guard("SELECT t.* FROM t"))
-  expect_true(guard("select * from works"))
-  expect_true(guard("SELECT a, w.* FROM works w"))
+  allowed <- c(
+    "SELECT doi FROM t WHERE REGEXP_CONTAINS(v, r'v2\\..*')",
+    "SELECT COUNT(*) FROM t",
+    "SELECT DISTINCT COUNT(*) AS n FROM t",
+    "SELECT year, COUNT(*) AS n FROM t GROUP BY year",
+    "SELECT doi FROM t -- not SELECT * here"
+  )
+  for (sql in allowed) {
+    expect_no_error(guard(sql))
+  }
+})
+
+test_that("cost estimate refuses SELECT * before contacting BigQuery", {
+  withr::with_envvar(c(BQ_BILLING_PROJECT = "bill"), {
+    # Fails before bq_dry_run_stats(), so no request is made
+    expect_error(orion_estimate_query_cost("SELECT DISTINCT * FROM `p.d.t`"),
+                 "SELECT \\* and table.\\* are not allowed")
+  })
+  expect_false("SELECT DISTINCT * FROM `p.d.t`" %in% names(dry_run_cache))
 })
 
 test_that("normalize_sql collapses whitespace only", {
