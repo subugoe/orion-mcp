@@ -244,6 +244,55 @@ test_that("read-only gate allows legitimate SELECT variants", {
   }
 })
 
+test_that("quotes inside comments cannot hide a second statement", {
+  expect_error(
+    assert_read_only_sql("SELECT 1 -- '\n; DROP TABLE a.b.c -- '"),
+    "Multi-statement"
+  )
+  expect_error(
+    assert_read_only_sql("SELECT 1 # '\n; DROP TABLE a.b.c # '"),
+    "Multi-statement"
+  )
+  expect_error(
+    assert_read_only_sql("SELECT 1 /* ' */ ; DROP TABLE a.b.c -- '"),
+    "Multi-statement"
+  )
+})
+
+test_that("scanner reads GoogleSQL literals and comments correctly", {
+  allowed <- c(
+    "SELECT 'it\\'s; fine' AS x",
+    'SELECT "a \\" ; b" AS x',
+    "SELECT '''multi\nline ' ; ''' AS x",
+    'SELECT """a "" ; b""" AS x',
+    "SELECT r'\\d+;' AS x",
+    "SELECT RB'\\x;' AS x",
+    "SELECT b'a;b' AS x",
+    "-- don't worry\nSELECT doi FROM `p.d.t`",
+    "# a hash comment with ; and '\nSELECT doi FROM `p.d.t`",
+    "SELECT doi FROM `p.d.t` WHERE note = 'a;b'"
+  )
+  for (sql in allowed) {
+    expect_no_error(assert_read_only_sql(sql))
+  }
+
+  # Raw strings: the backslash does not escape, so the quote ends the literal
+  expect_error(assert_read_only_sql("SELECT r'\\'; DROP TABLE t"),
+               "Multi-statement|Unterminated")
+  expect_error(assert_read_only_sql("SELECT 'open"), "Unterminated")
+  expect_error(assert_read_only_sql("SELECT 1 /* open"), "Unterminated")
+  expect_error(assert_read_only_sql("SELECT '''open"), "Unterminated")
+
+  expect_equal(blank_sql_literals("SELECT 'a' -- c\n, 1"), "SELECT ''  \n, 1")
+})
+
+test_that("only BigQuery's SELECT statement type passes", {
+  expect_no_error(assert_select_statement("SELECT"))
+  expect_error(assert_select_statement("SCRIPT"), "'SCRIPT'")
+  expect_error(assert_select_statement("INSERT"), "'INSERT'")
+  expect_error(assert_select_statement(NULL), "'unknown'")
+})
+
 test_that("destination tables must be fully qualified", {
   skip_if_not_installed("bigrquery")
   dest <- parse_bq_table("my-project.my_dataset.my_table")

@@ -14,12 +14,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install R packages
 RUN install2.r \
-    bigrquery \
     gargle \
     DBI \
     dbplyr \
     jsonlite \
     ellmer
+
+# bigrquery pinned: R/functions.R (bq_dry_run_stats) calls its internal
+# bq_post() and bq_path(), which may change between releases.
+RUN R -e 'install.packages("remotes"); remotes::install_version("bigrquery", version = "1.6.2", upgrade = "never")'
 
 # Install mcptools separately (has complex dependencies)
 RUN R -e 'install.packages("mcptools", type = "source")'

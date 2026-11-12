@@ -66,6 +66,139 @@ dry_run_cache <- character(0)
 
 normalize_sql <- function(sql) str_squish(sql)
 
+# TRUE if the quote at position i carries a raw prefix (r, rb, br; any
+# case). Inside raw literals a backslash does not escape.
+is_raw_prefix <- function(chars, i) {
+  k <- i - 1L
+  prefix <- character(0)
+  while (k >= 1L && str_detect(chars[k], "[A-Za-z0-9_]")) {
+    prefix <- c(chars[k], prefix)
+    k <- k - 1L
+  }
+  str_to_lower(str_flatten(prefix)) %in% c("r", "rb", "br")
+}
+
+# Single left-to-right pass over GoogleSQL. String and bytes literals become
+# '' and comments a space; backtick identifiers are kept but not scanned for
+# quotes or comments. A regex cannot do this, because a quote inside a
+# comment (or a comment marker inside a string) changes how the rest of the
+# text must be read. Unterminated literals and comments are errors.
+blank_sql_literals <- function(sql) {
+  chars <- str_split_1(sql, "")
+  n <- length(chars)
+  out <- character(0)
+  i <- 1L
+
+  while (i <= n) {
+    ch <- chars[i]
+    nxt <- if (i < n) chars[i + 1L] else ""
+
+    if ((ch == "-" && nxt == "-") || ch == "#") {
+      while (i <= n && chars[i] != "\n") i <- i + 1L
+      out <- c(out, " ")
+      next
+    }
+
+    if (ch == "/" && nxt == "*") {
+      j <- i + 2L
+      while (j < n && !(chars[j] == "*" && chars[j + 1L] == "/")) j <- j + 1L
+      if (j >= n) stop("Unterminated /* block comment in SQL.")
+      out <- c(out, " ")
+      i <- j + 2L
+      next
+    }
+
+    if (ch == "`") {
+      j <- i + 1L
+      while (j <= n && chars[j] != "`") {
+        if (chars[j] == "\\") j <- j + 1L
+        j <- j + 1L
+      }
+      if (j > n) stop("Unterminated backtick identifier in SQL.")
+      out <- c(out, chars[i:j])
+      i <- j + 1L
+      next
+    }
+
+    if (ch %in% c("'", '"')) {
+      raw <- is_raw_prefix(chars, i)
+      triple <- i + 2L <= n && chars[i + 1L] == ch && chars[i + 2L] == ch
+      j <- if (triple) i + 3L else i + 1L
+      closed <- FALSE
+      while (j <= n) {
+        if (!raw && chars[j] == "\\") {
+          j <- j + 2L
+          next
+        }
+        if (triple) {
+          if (j + 2L <= n && chars[j] == ch && chars[j + 1L] == ch &&
+              chars[j + 2L] == ch) {
+            j <- j + 2L
+            closed <- TRUE
+            break
+          }
+        } else {
+          if (chars[j] == ch) {
+            closed <- TRUE
+            break
+          }
+          # Single-quoted literals cannot span lines in GoogleSQL
+          if (chars[j] == "\n") break
+        }
+        j <- j + 1L
+      }
+      if (!closed) stop("Unterminated string literal in SQL.")
+      out <- c(out, "''")
+      i <- j + 1L
+      next
+    }
+
+    out <- c(out, ch)
+    i <- i + 1L
+  }
+
+  str_flatten(out)
+}
+
+# BigQuery's own classification of the SQL is the final authority: the
+# local scanner can miss syntax it does not know, the dry run cannot.
+assert_select_statement <- function(statement_type) {
+  if (!identical(statement_type, "SELECT")) {
+    label <- if (is.character(statement_type) && length(statement_type) == 1) {
+      statement_type
+    } else {
+      "unknown"
+    }
+    stop(glue(
+      "BigQuery classified this SQL as '{label}', not a single SELECT ",
+      "statement. Only read-only SELECT queries are allowed."
+    ))
+  }
+  invisible(TRUE)
+}
+
+# Same request as bigrquery::bq_perform_query_dry_run(), which keeps only
+# the byte count. We also need statistics.query.statementType. Uses
+# bigrquery internals, so the version is pinned in the Dockerfile.
+bq_dry_run_stats <- function(query, billing) {
+  body <- list(configuration = list(
+    query = list(
+      query = jsonlite::unbox(query),
+      useLegacySql = jsonlite::unbox(FALSE)
+    ),
+    dryRun = jsonlite::unbox(TRUE)
+  ))
+  res <- bigrquery:::bq_post(
+    bigrquery:::bq_path(billing, jobs = ""),
+    body = body,
+    query = list(fields = "statistics")
+  )
+  list(
+    bytes = as.numeric(res$statistics$query$totalBytesProcessed),
+    statement_type = res$statistics$query$statementType
+  )
+}
+
 # The OAuth token may carry a write-capable scope (gcloud user credentials
 # do not support bigquery.readonly), so read-only access is enforced here
 # instead: exactly one statement, and it must be a SELECT (optionally
@@ -74,10 +207,7 @@ normalize_sql <- function(sql) str_squish(sql)
 # string literals and comments blanked, for further pattern checks.
 assert_read_only_sql <- function(sql) {
   clean <- sql |>
-    str_replace_all("'[^']*'", "''") |>
-    str_replace_all('"[^"]*"', '""') |>
-    str_remove_all(regex("/\\*.*?\\*/", dotall = TRUE)) |>
-    str_remove_all("--[^\n]*") |>
+    blank_sql_literals() |>
     str_squish() |>
     str_remove(";$")
 
@@ -105,7 +235,10 @@ orion_estimate_query_cost <- function(query) {
 
   assert_read_only_sql(query)
 
-  bytes <- as.numeric(bq_perform_query_dry_run(query, billing = billing))
+  stats <- bq_dry_run_stats(query, billing)
+  # Rejected SQL never enters the dry-run cache, so it cannot be run.
+  assert_select_statement(stats$statement_type)
+  bytes <- stats$bytes
   gb <- round(bytes / 1e9, 3)
   cost <- round(bytes / 1e12 * 6.25, 4)
   # Avoid scientific notation ("1e-04") in the user-facing message
