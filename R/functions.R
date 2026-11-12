@@ -564,9 +564,10 @@ get_result <- function(name) {
       stop(glue(
         "Result '{name}' is no longer stored: the server keeps only the ",
         "{stored_results_limit()} most recent results (MAX_STORED_RESULTS) ",
-        "and has dropped older ones. {available} To get '{name}' back, run ",
-        "its SQL again; tell the user first that this is billed again ",
-        "unless BigQuery serves it from its 24-hour cache."
+        "and has dropped older ones. {available} To get the data back, run ",
+        "its SQL again (the result gets a new name); tell the user first ",
+        "that this is billed again unless BigQuery serves it from its ",
+        "24-hour cache."
       ))
     }
     stop(glue("No stored result named '{name}'. {available}"))
