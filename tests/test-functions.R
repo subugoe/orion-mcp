@@ -567,6 +567,14 @@ test_that("maximumBytesBilled cap covers the estimate and BigQuery's minimum", {
   expect_equal(merged$configuration$query$maximumBytesBilled, "12000000000")
 })
 
+test_that("cost estimate uses the per-TiB on-demand rate", {
+  expect_equal(estimate_cost_usd(2^40), 6.25)
+  expect_equal(estimate_cost_usd(0), 0)
+  # 10^12 bytes is less than a TiB, so it costs less than $6.25
+  expect_equal(estimate_cost_usd(1e12), round(1e12 / 2^40 * 6.25, 4))
+  expect_lt(estimate_cost_usd(1e12), 5.7)
+})
+
 test_that("per-query size limit is enforced and configurable", {
   expect_no_error(assert_query_size(499e9, max_gb = 500))
   expect_no_error(assert_query_size(500e9, max_gb = 500))

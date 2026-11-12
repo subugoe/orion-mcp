@@ -91,7 +91,7 @@ Replace:
 
 > Schema browsing (`orion_list_datasets`, `orion_list_tables`, `orion_get_db_schema`) works without a billing project. You can omit the `BQ_BILLING_PROJECT` line entirely if you only want to explore schemas.
 
-BigQuery bills by bytes scanned, not rows returned. The [BigQuery sandbox](https://cloud.google.com/bigquery/docs/sandbox) gives every account 1 TB of free query processing per month.
+BigQuery bills by bytes scanned, not rows returned. The cost estimate uses the approximate on-demand rate of $6.25 per TiB scanned (1 TiB = 2^40 bytes, about 1,100 GB); your actual rate can differ, for example by region or contract. The [BigQuery sandbox](https://cloud.google.com/bigquery/docs/sandbox) gives every account 1 TiB of free query processing per month.
 
 #### How exports reach your machine
 

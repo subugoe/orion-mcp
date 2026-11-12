@@ -134,6 +134,12 @@ read_limit_env <- function(var, default) {
   value
 }
 
+# Approximate BigQuery on-demand rate. Google prices per TiB (2^40 bytes),
+# not per 10^12 bytes; using 10^12 overstated the cost by about 9 %.
+USD_PER_TIB <- 6.25
+
+estimate_cost_usd <- function(bytes) round(bytes / 2^40 * USD_PER_TIB, 4)
+
 # Refuse very large scans before the user is even asked to confirm them.
 assert_query_size <- function(bytes, max_gb = read_limit_env("MAX_GB_PER_QUERY", "500")) {
   gb <- bytes / 1e9
@@ -360,7 +366,7 @@ orion_estimate_query_cost <- function(query) {
   bytes <- stats$bytes
   assert_query_size(bytes)
   gb <- round(bytes / 1e9, 3)
-  cost <- round(bytes / 1e12 * 6.25, 4)
+  cost <- estimate_cost_usd(bytes)
   # Avoid scientific notation ("1e-04") in the user-facing message
   cost_display <- format(cost, scientific = FALSE)
 
