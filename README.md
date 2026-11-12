@@ -11,7 +11,7 @@ Contributions and feedback are welcome via GitHub issues.
 
 Query results of any size are kept **in the local R session** (named `q1`, `q2`, ...) — only a size-capped preview is sent to the LLM, so large results never overflow the conversation. The LLM can then analyse the full result by reference using built-in tools (`orion_result_summary`, `orion_result_count`, `orion_result_slice`) or write it to a file with `orion_export_result` — all without re-querying BigQuery, so follow-up questions and exports are free. After each run, the actual amount billed is reported back (including when BigQuery served the query from its 24-hour cache at no cost). The preview budget defaults to ~60,000 characters (sized to fit typical MCP client limits) and can be changed with the `MAX_RESULT_CHARS` environment variable (e.g. `-e MAX_RESULT_CHARS=200000`).
 
-The tool does not send raw data to the LLM provider; it only shares SQL queries. The MCP server runs in an isolated Docker container with no access to your file system. The only information passed to the container is your Google Cloud credentials, used to authenticate with BigQuery via Application Default Credentials (ADC).
+The model, and so the LLM provider, sees the table schemas, the SQL, and a size-capped preview of each result, as well as the output of `orion_result_summary`, `orion_result_count` and `orion_result_slice`. The full result stays in the server's R session and in the files you export. The MCP server runs in an isolated Docker container with no access to your file system. The only information passed to the container is your Google Cloud credentials, used to authenticate with BigQuery via Application Default Credentials (ADC).
 
 You can browse schema metadata without a Google Cloud account.
 
@@ -29,7 +29,7 @@ gcloud auth application-default login
 
 This opens a browser window and saves credentials to `~/.config/gcloud/`. You only need to do this once. When the MCP server starts, it requests the narrowest access scope your credential type supports: `bigquery.readonly` where possible (service accounts), otherwise the standard BigQuery scope — gcloud user credentials do not support the read-only scope.
 
-Regardless of what the credentials would allow, **the server enforces read-only SQL itself**: it executes only single `SELECT` statements. Data-modifying SQL (`INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`, multi-statement scripts, ...) is rejected before it reaches BigQuery.
+Regardless of what the credentials would allow, **the server enforces read-only SQL itself**: it executes only single `SELECT` statements. Data-modifying SQL (`INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`, multi-statement scripts, ...) is rejected before it runs: the server checks the SQL itself, and the free dry run must report BigQuery's statement type as `SELECT`.
 
 Writing is still possible — but only through two dedicated tools where the destination table is an explicit argument you confirm in the conversation, never through SQL: `orion_save_result_to_bq` uploads an already-run result as a table (a free load job), and `orion_query_to_table` writes large query results directly to a table in your project without downloading them (only the query scan is billed). Both refuse to touch an existing table unless you explicitly ask to overwrite it, and both are bounded by your own IAM permissions.
 
