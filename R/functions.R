@@ -95,7 +95,15 @@ dry_run_cache <- numeric(0)
 # Normalised SQL -> number of tables the query reads (for the billing floor)
 dry_run_tables <- integer(0)
 
-normalize_sql <- function(sql) str_squish(sql)
+# Key under which a query's estimate is stored: comments removed and
+# whitespace collapsed outside string literals, literals kept as written.
+# The model can therefore lay the SQL out over several lines for the user
+# and still match its estimate. Comments are removed, not kept, because
+# joining the lines of SQL that contains a `--` comment changes what the
+# query does, and such a variant must not match the estimate.
+normalize_sql <- function(sql) {
+  blank_sql_literals(sql, keep_literals = TRUE, squish = TRUE)
+}
 
 cache_dry_run <- function(sql, bytes, n_tables = 1L) {
   key <- normalize_sql(sql)
@@ -187,11 +195,17 @@ is_raw_prefix <- function(chars, i) {
 # quotes or comments. A regex cannot do this, because a quote inside a
 # comment (or a comment marker inside a string) changes how the rest of the
 # text must be read. Unterminated literals and comments are errors.
-blank_sql_literals <- function(sql) {
+# With keep_literals, literals are copied as written (comments still go).
+# With squish, runs of whitespace outside literals become one space.
+blank_sql_literals <- function(sql, keep_literals = FALSE, squish = FALSE) {
   chars <- str_split_1(sql, "")
   n <- length(chars)
   out <- character(0)
   i <- 1L
+
+  add_space <- function(out) {
+    if (squish && identical(tail(out, 1), " ")) out else c(out, " ")
+  }
 
   while (i <= n) {
     ch <- chars[i]
@@ -199,7 +213,7 @@ blank_sql_literals <- function(sql) {
 
     if ((ch == "-" && nxt == "-") || ch == "#") {
       while (i <= n && chars[i] != "\n") i <- i + 1L
-      out <- c(out, " ")
+      out <- add_space(out)
       next
     }
 
@@ -207,8 +221,14 @@ blank_sql_literals <- function(sql) {
       j <- i + 2L
       while (j < n && !(chars[j] == "*" && chars[j + 1L] == "/")) j <- j + 1L
       if (j >= n) stop("Unterminated /* block comment in SQL.")
-      out <- c(out, " ")
+      out <- add_space(out)
       i <- j + 2L
+      next
+    }
+
+    if (squish && str_detect(ch, "\\s")) {
+      out <- add_space(out)
+      i <- i + 1L
       next
     }
 
@@ -252,7 +272,7 @@ blank_sql_literals <- function(sql) {
         j <- j + 1L
       }
       if (!closed) stop("Unterminated string literal in SQL.")
-      out <- c(out, "''")
+      out <- c(out, if (keep_literals) chars[i:j] else "''")
       i <- j + 1L
       next
     }
@@ -261,7 +281,8 @@ blank_sql_literals <- function(sql) {
     i <- i + 1L
   }
 
-  str_flatten(out)
+  res <- str_flatten(out)
+  if (squish) str_trim(res) else res
 }
 
 # BigQuery's own classification of the SQL is the final authority: the
@@ -376,12 +397,17 @@ orion_estimate_query_cost <- function(query) {
     bytes_processed = bytes,
     gb_processed = gb,
     cost_usd_estimate = cost,
-    canonical_sql = normalize_sql(query),
+    sql = str_trim(query),
     message = glue(
       "This query will scan {gb} GB (estimated cost: ${cost_display}). ",
       "Present this to the user in exactly this order: ",
-      "(1) the full SQL verbatim in a fenced ```sql code block — ",
-      "never paraphrase or summarise the query instead of showing it; ",
+      "(1) the full SQL in a fenced ```sql code block, laid out for ",
+      "reading: SELECT, FROM, each JOIN, WHERE, GROUP BY, ORDER BY and ",
+      "LIMIT start a new line, each selected column and each AND/OR ",
+      "condition is on its own indented line, subqueries and CTEs are ",
+      "indented, and no line is longer than about 80 characters. Never ",
+      "show it as one long line, and never paraphrase or summarise the ",
+      "query instead of showing it; ",
       "(2) a one-sentence plain-English explanation of what the query does ",
       "(which tables it reads and what it filters, joins, or aggregates), ",
       "since the user may still be learning SQL and BigQuery; ",
@@ -389,8 +415,10 @@ orion_estimate_query_cost <- function(query) {
       "'Shall I run this query?'. ",
       "Monthly free tier usage is unknown — do not assume the query is ",
       "free. Wait for explicit confirmation before proceeding. ",
-      "If confirmed, pass canonical_sql verbatim to orion_run_bq_query or ",
-      "orion_export_bq_query. Do NOT modify, reformat, or re-derive the SQL."
+      "If confirmed, pass this same SQL to orion_run_bq_query or ",
+      "orion_export_bq_query. Line breaks and spacing do not affect the ",
+      "match with this estimate; any other change, however small, needs a ",
+      "new estimate. Do NOT rewrite or re-derive the SQL."
     )
   ) |> toJSON(auto_unbox = TRUE, pretty = TRUE)
 }
@@ -643,7 +671,7 @@ orion_run_bq_query <- function(query) {
   glue(
     "Result '{name}': {nrow(result)} rows x {ncol(result)} columns ",
     "({rendered$format} below). {size_note} {run$billing_note}\n",
-    "SQL: {normalize_sql(query)}\n",
+    "SQL:\n{str_trim(query)}\n",
     "PRESENTATION INSTRUCTIONS: The user may be new to SQL and BigQuery — ",
     "support their learning. When presenting these results: ",
     "(1) summarise the key findings in plain language; ",
@@ -971,7 +999,7 @@ orion_export_bq_query <- function(query, filename = NULL) {
       "{export_mount_note()} ",
       "The result is also stored in the R session as '{name}' for the ",
       "analysis tools. ",
-      "SQL: {normalize_sql(query)}. ",
+      "SQL:\n{str_trim(query)}\n",
       "When presenting this to the user, say in plain language what was ",
       "exported, where the files appear on their machine, and briefly ",
       "explain what the query did — the user may be learning SQL and ",
@@ -1051,7 +1079,7 @@ orion_query_to_table <- function(query, destination, overwrite = FALSE) {
       "({if (is.na(n_rows)) 'row count unavailable' else glue('{n_rows} rows')}) ",
       "— nothing was downloaded. {job_billing_note(query_stats)} ",
       "The write itself is free; only the query scan is billed. ",
-      "SQL: {normalize_sql(query)}. ",
+      "SQL:\n{str_trim(query)}\n",
       "When presenting this to the user, say in plain language what was ",
       "computed and where the table now lives, and briefly explain what ",
       "the query did — the user may be learning SQL and BigQuery."

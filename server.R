@@ -130,13 +130,14 @@ mcp_server(
         "about 1,100 GB; the approximate BigQuery on-demand rate). ",
         "After receiving the estimate, STOP and present it following the ",
         "returned message exactly: show the full SQL in a fenced code ",
-        "block, explain in plain language what it does, state the GB ",
+        "block, laid out over several lines for reading (never as one ",
+        "long line), explain in plain language what it does, state the GB ",
         "scanned and cost, then ask 'Shall I run this query?'. ",
         "Do NOT call orion_run_bq_query until the user explicitly confirms ",
         "they want to proceed. ",
-        "CRITICAL: the SQL passed to orion_run_bq_query MUST be ",
-        "byte-for-byte identical to the SQL passed here. Do NOT reformat, ",
-        "rewrite, or improve the SQL after the dry run. If the user asks ",
+        "CRITICAL: the SQL passed to orion_run_bq_query MUST be the SQL ",
+        "passed here. Only line breaks and spacing may differ. Do NOT ",
+        "rewrite or improve the SQL after the dry run. If the user asks ",
         "to change the query in any way, call orion_estimate_query_cost ",
         "again with the new SQL before presenting a cost estimate or ",
         "running it. Never reuse a previous cost estimate for modified ",
@@ -149,7 +150,9 @@ mcp_server(
       arguments = list(
         query = type_string(glue(
           "The fully-qualified BigQuery SQL query to dry-run ",
-          "(include project.dataset.table in the query itself)"
+          "(include project.dataset.table in the query itself). Write it ",
+          "over several lines, one clause per line, as you would show it ",
+          "to the user; this text is also saved next to exports."
         ))
       ),
       annotations = tool_annotations(

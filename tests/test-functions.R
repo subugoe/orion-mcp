@@ -536,9 +536,38 @@ test_that("cost estimate refuses SELECT * before contacting BigQuery", {
   expect_false("SELECT DISTINCT * FROM `p.d.t`" %in% names(dry_run_cache))
 })
 
-test_that("normalize_sql collapses whitespace only", {
+test_that("normalize_sql collapses whitespace outside literals", {
   expect_equal(normalize_sql("  SELECT a,\n   b\tFROM t  "),
                "SELECT a, b FROM t")
+  # Whitespace inside a string literal is part of the query
+  expect_equal(normalize_sql("SELECT 'a  b'  AS x"), "SELECT 'a  b' AS x")
+  expect_false(normalize_sql("SELECT 'a  b'") == normalize_sql("SELECT 'a b'"))
+})
+
+test_that("normalize_sql drops comments, so joined lines cannot match", {
+  multi <- "SELECT a -- the id\nFROM t\nWHERE b = 1"
+  expect_equal(normalize_sql(multi), "SELECT a FROM t WHERE b = 1")
+  # On one line the comment swallows the rest of the query
+  expect_equal(normalize_sql("SELECT a -- the id FROM t WHERE b = 1"), "SELECT a")
+  expect_equal(normalize_sql("SELECT a /* id */ FROM t # end"), "SELECT a FROM t")
+  # A comment marker inside a literal is not a comment
+  expect_equal(normalize_sql("SELECT '--x' AS a"), "SELECT '--x' AS a")
+})
+
+test_that("a re-laid-out query matches its estimate, a joined one does not", {
+  estimated <- "SELECT a, -- the id\n  b\nFROM `p.d.t`\nWHERE b = 1"
+  cache_dry_run(estimated, 1000)
+  # Same query, different line breaks: passes the estimate check and stops
+  # at the next one (no billing project in the tests)
+  expect_error(
+    validate_query("SELECT a,\n       b\nFROM `p.d.t` WHERE b = 1"),
+    "BQ_BILLING_PROJECT"
+  )
+  # Lines joined: the comment now hides the rest, so this is another query
+  expect_error(
+    validate_query("SELECT a, -- the id b FROM `p.d.t` WHERE b = 1"),
+    "Cost estimate required"
+  )
 })
 
 test_that("unrun queries are rejected before reaching BigQuery", {
