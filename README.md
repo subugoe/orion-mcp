@@ -16,7 +16,7 @@ Two more environment variables set hard limits:
 - `MAX_GB_PER_QUERY` (default `500`): the cost estimate refuses queries that would scan more than this many GB. Each run is also sent to BigQuery with `maximumBytesBilled` set from its estimate (plus BigQuery's 10 MB minimum per table), so BigQuery stops a job without charge if it would bill more than the estimate allows. Jobs carry the label `tool: orion-mcp`, which you can filter on in the Google Cloud billing export.
 - `MAX_DOWNLOAD_ROWS` (default `1000000`): results with more rows are not downloaded into the R session. The query is still billed; aggregate or filter it, or use `orion_query_to_table` to keep the result in BigQuery.
 
-The model, and so the LLM provider, sees the table schemas, the SQL, and a size-capped preview of each result, as well as the output of `orion_result_summary`, `orion_result_count` and `orion_result_slice`. The full result stays in the server's R session and in the files you export. The MCP server runs in an isolated Docker container with no access to your file system. The only information passed to the container is your Google Cloud credentials, used to authenticate with BigQuery via Application Default Credentials (ADC).
+The model, and so the LLM provider, sees the table schemas, the SQL, and a size-capped preview of each result, as well as the output of `orion_result_summary`, `orion_result_count` and `orion_result_slice`. The full result stays in the server's R session and in the files you export. The MCP server runs in an isolated Docker container with no access to your file system. The only file passed to the container is your Application Default Credentials file (`application_default_credentials.json`, mounted read-only), used to authenticate with BigQuery.
 
 You can browse schema metadata without a Google Cloud account.
 
@@ -32,7 +32,7 @@ If you are new to Google Cloud, you will also need a [Google account and a Cloud
 gcloud auth application-default login
 ```
 
-This opens a browser window and saves credentials to `~/.config/gcloud/`. You only need to do this once. When the MCP server starts, it requests the narrowest access scope your credential type supports: `bigquery.readonly` where possible (service accounts), otherwise the standard BigQuery scope — gcloud user credentials do not support the read-only scope.
+This opens a browser window and saves your credentials to `~/.config/gcloud/application_default_credentials.json`. You only need to do this once. Step 3 mounts only this file into the container, not the rest of `~/.config/gcloud/`. When the MCP server starts, it requests the narrowest access scope your credential type supports: `bigquery.readonly` where possible (service accounts), otherwise the standard BigQuery scope — gcloud user credentials do not support the read-only scope.
 
 Regardless of what the credentials would allow, **the server enforces read-only SQL itself**: it executes only single `SELECT` statements. Data-modifying SQL (`INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`, multi-statement scripts, ...) is rejected before it runs: the server checks the SQL itself, and the free dry run must report BigQuery's statement type as `SELECT`.
 
@@ -73,7 +73,7 @@ Then add the `orion-dbs` entry inside `mcpServers`. If the file already contains
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "-v", "/Users/YOUR_USERNAME/.config/gcloud:/root/.config/gcloud:ro",
+        "-v", "/Users/YOUR_USERNAME/.config/gcloud/application_default_credentials.json:/root/.config/gcloud/application_default_credentials.json:ro",
         "-v", "/Users/YOUR_USERNAME/Downloads/orion-exports:/data/exports",
         "-e", "BQ_BILLING_PROJECT=YOUR_PROJECT_ID",
         "ghcr.io/subugoe/orion-mcp:latest"

@@ -1,28 +1,17 @@
 services:
-  rstudio:
-    build: .
-    ports:
-      - "8787:8787"
-    volumes:
-      - .:/home/rstudio/workspace
-    environment:
-      - PASSWORD=user      # pick anything
-      - USERID=1000
-      - GROUPID=1000
-    restart: unless-stopped
-
-  # MCP server — Claude Code connects to this via stdio
-  # To use: add this to your Claude Code MCP config 
-
+  # MCP server — an MCP client connects to this via stdio.
+  # To use: add the equivalent `docker run` command to the client's MCP config.
   mcp:
     build: .
     volumes:
-      - ~/.config/gcloud:/root/.config/gcloud:ro
+      # Only the ADC file, not the whole gcloud config directory
+      - ~/.config/gcloud/application_default_credentials.json:/root/.config/gcloud/application_default_credentials.json:ro
       - ./exports:/data/exports
     stdin_open: true   # needed for stdio MCP transport
     tty: false
     environment:
       - BQ_BILLING_PROJECT=${BQ_BILLING_PROJECT}
       - SCHEMA_DIR=/data
+      - SCHEMA_REFRESH=1                           # 0 skips the start-up download
       - SCHEMA_REPO=orion-dbs-community/website   # repo to pull schemas from
       - SCHEMA_PATH=data                           # folder within that repo
