@@ -1,72 +1,80 @@
-# orion-mcp: MCP Server for ORION-DBs collections.
+# orion-mcp: MCP server for ORION-DBs collections
 
-`orion-mcp` is a [Model Context Protocol (MCP) server](https://modelcontextprotocol.io/docs/getting-started/intro) that lets you query the [ORION-DBs](https://orion-dbs.community/) collections on Google BigQuery using an LLM. It supports OpenAlex, Crossref, ORCID, DataCite, and more. 
-It is an early, experimental implementation focused on open research information. Aaron Tay's [broader context about the potential of LLMs in combination with academic MCP servers](https://aarontay.substack.com/p/creating-your-own-research-assistant) is a useful general introduction.
+`orion-mcp` lets you query the [ORION-DBs](https://orion-dbs.community/) collections on Google BigQuery by talking to an LLM such as Claude. The collections hold open research information from OpenAlex, Crossref, OpenAIRE, ORCID, DataCite and other sources.
 
-Contributions and feedback are welcome via GitHub issues.
+It is a [Model Context Protocol (MCP) server](https://modelcontextprotocol.io/docs/getting-started/intro): a small program that runs on your computer and gives the LLM a set of tools. It is an early, experimental implementation. A [blog post](https://subugoe.github.io/scholcomm_analytics/posts/orion_mcp_intro/) walks through an example session, and Aaron Tay gives [broader context on LLMs and academic MCP servers](https://aarontay.substack.com/p/creating-your-own-research-assistant).
 
-## How it works
+Feedback and contributions are welcome via GitHub issues.
 
-`orion-mcp` loads ORION-DBs schema metadata (column names, types, and descriptions) into the LLM context. When you ask a question, the LLM writes a BigQuery SQL query, shows it to you together with an estimate of how many GB it will scan, and asks for your confirmation before running it. Queries that select all columns (`SELECT *`, also `SELECT DISTINCT *` and `table.*`) are refused at the cost estimate, before you are asked to confirm. Naming only the columns you need keeps queries fast and costs low. Results can be downloaded and analysed locally.
+## What happens when you ask a question
 
-Query results of any size are kept **in the local R session** (named `q1`, `q2`, ...) — only a size-capped preview is sent to the LLM, so large results never overflow the conversation. The LLM can then analyse the full result by reference using built-in tools (`orion_result_summary`, `orion_result_count`, `orion_result_slice`) or write it to a file with `orion_export_result` — all without re-querying BigQuery, so follow-up questions and exports are free. After each run, the actual amount billed is reported back (including when BigQuery served the query from its 24-hour cache at no cost). The preview budget defaults to ~60,000 characters (sized to fit typical MCP client limits) and can be changed with the `MAX_RESULT_CHARS` environment variable (e.g. `-e MAX_RESULT_CHARS=200000`). The session keeps the 20 most recent results and drops older ones, so that memory use stays bounded; set `MAX_STORED_RESULTS` to change the number. Asking for a dropped result gives a message that says so; running its query again stores the result under a new name, and is billed again unless BigQuery serves it from its cache.
+1. The LLM looks up which datasets and tables exist and reads the schema of the tables it needs. This uses schema files published by the ORION-DBs website. It needs no Google account and costs nothing.
+2. It writes a BigQuery SQL query and asks BigQuery for a dry run. The dry run is free. It checks the SQL and reports how much data the query would scan.
+3. It shows you the SQL, the amount of data and the estimated cost, and asks whether to run it.
+4. After you agree, the query runs on BigQuery in your own Google Cloud project. The full result is kept on your computer under a name (`q1`, `q2`, ...). The LLM receives a preview.
+5. You can ask follow-up questions about a stored result (summaries, counts, subsets) or export it to a file. Neither queries BigQuery again, so both are free.
 
-Two more environment variables set hard limits:
+## What runs where
 
-- `MAX_GB_PER_QUERY` (default `500`): the cost estimate refuses queries that would scan more than this many GB. Each run is also sent to BigQuery with `maximumBytesBilled` set from its estimate (plus BigQuery's 10 MB minimum per table), so BigQuery stops a job without charge if it would bill more than the estimate allows. Jobs carry the label `tool: orion-mcp`, which you can filter on in the Google Cloud billing export.
-- `MAX_DOWNLOAD_ROWS` (default `1000000`): results with more rows are not downloaded into the R session. The query is still billed; aggregate or filter it, or use `orion_query_to_table` to keep the result in BigQuery.
+| Part | Where | What it does |
+|---|---|---|
+| Claude Desktop | Your computer | The chat. Starts `orion-mcp` and calls its tools. |
+| `orion-mcp` | A Docker container on your computer | Holds the schema files, talks to BigQuery with your Google login, keeps query results, writes exports. |
+| BigQuery | Google Cloud | Runs the SQL. Scans are billed to your project. |
+| The LLM | Its provider (for Claude: Anthropic) | Sees your questions, the table schemas, the SQL, and a size-capped preview of each result. It does not see your Google login or the full results. |
 
-The model, and so the LLM provider, sees the table schemas, the SQL, and a size-capped preview of each result, as well as the output of `orion_result_summary`, `orion_result_count` and `orion_result_slice`. The full result stays in the server's R session and in the files you export. The MCP server runs in an isolated Docker container with no access to your file system. The only file passed to the container is your Application Default Credentials file (`application_default_credentials.json`, mounted read-only), used to authenticate with BigQuery.
+The container can read one file from your computer (your Google login file, read-only) and write to one folder (for exports). It has no other access to your files.
 
-Schema metadata is part of the image. The image is rebuilt daily from the schema files that the ORION-DBs website publishes, and at start-up the server tries to download the current files. If that download fails, or is incomplete, the files in the image are used and one line is printed to the container's stderr. Set `SCHEMA_REFRESH=0` (e.g. `-e SCHEMA_REFRESH=0`) to skip the download; the server then starts faster and works offline with the schemas from the image. `SCHEMA_REPO` and `SCHEMA_PATH` change where the files come from.
+## What you need
 
-You can browse schema metadata without a Google Cloud account.
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- [Claude Desktop](https://claude.ai/download)
+- To run queries: the [gcloud CLI](https://cloud.google.com/sdk/docs/install) and a [Google Cloud project](https://cloud.google.com/resource-manager/docs/creating-managing-projects). Looking at datasets and schemas works without them.
 
-## Installation
+The steps below were tested on macOS. Paths for Linux are given. Windows has not been tested.
 
-**Prerequisites:** [Docker Desktop](https://www.docker.com/products/docker-desktop/), [Claude Desktop](https://claude.ai/download), [gcloud CLI](https://cloud.google.com/sdk/docs/install)
+## Set up with Claude Desktop
 
-If you are new to Google Cloud, you will also need a [Google account and a Cloud project](https://cloud.google.com/resource-manager/docs/creating-managing-projects) to run queries. Schema browsing works without one.
-
-### 1. Authenticate with Google Cloud
+### 1. Log in to Google Cloud
 
 ```bash
 gcloud auth application-default login
 ```
 
-This opens a browser window and saves your credentials to `~/.config/gcloud/application_default_credentials.json`. You only need to do this once. Step 3 mounts only this file into the container, not the rest of `~/.config/gcloud/`. When the MCP server starts, it requests the narrowest access scope your credential type supports: `bigquery.readonly` where possible (service accounts), otherwise the standard BigQuery scope — gcloud user credentials do not support the read-only scope.
+A browser window opens. Afterwards your login is stored in `~/.config/gcloud/application_default_credentials.json`. You do this once.
 
-Regardless of what the credentials would allow, **the server enforces read-only SQL itself**: it executes only single `SELECT` statements. Data-modifying SQL (`INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`, multi-statement scripts, ...) is rejected before it runs: the server checks the SQL itself, and the free dry run must report BigQuery's statement type as `SELECT`.
+Do this step before step 4. If the file does not exist when the server first starts, Docker creates an empty folder with that name in its place, and the login then fails until you delete that folder.
 
-Writing is still possible — but only through two dedicated tools where the destination table is an explicit argument you confirm in the conversation, never through SQL: `orion_save_result_to_bq` uploads an already-run result as a table (a free load job), and `orion_query_to_table` writes large query results directly to a table in your project without downloading them (only the query scan is billed). Both refuse to touch an existing table unless you explicitly ask to overwrite it, and both are bounded by your own IAM permissions.
+### 2. Download the server
 
-### 2. Pull the Docker image
-
-Make sure Docker Desktop is open and running, then download the server image:
+Open Docker Desktop and wait until it is running. Then:
 
 ```bash
 docker pull ghcr.io/subugoe/orion-mcp:latest
 ```
 
-### 3. Add the server to Claude Desktop
-
-Open your Claude Desktop config file in a text editor:
-
-- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-  > `Library` is a hidden folder. Open it from Terminal with:
-  > ```bash
-  > open ~/Library/Application\ Support/Claude/claude_desktop_config.json
-  > ```
-  > Or in Finder: **Go → Go to Folder** (`⇧⌘G`) and paste `~/Library/Application Support/Claude/`
-- **Linux:** `~/.config/Claude/claude_desktop_config.json`
-
-First create the folder where exported query results will appear on your machine:
+### 3. Create a folder for exports
 
 ```bash
 mkdir -p ~/Downloads/orion-exports
 ```
 
-Then add the `orion-dbs` entry inside `mcpServers`. If the file already contains other servers, add a comma after the last entry before adding this one, as JSON is strict about commas.
+Files you ask Claude to export will appear here. Any folder works; use the same path in step 4.
+
+### 4. Add the server to Claude Desktop
+
+In Claude Desktop, open **Settings → Developer → Edit Config**. This shows the file `claude_desktop_config.json`. Open it in a text editor. If the menu entry is missing, the file is here:
+
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Linux: `~/.config/Claude/claude_desktop_config.json`
+
+On macOS, `Library` is a hidden folder. This opens the file from the Terminal:
+
+```bash
+open ~/Library/Application\ Support/Claude/claude_desktop_config.json
+```
+
+Add the `orion-dbs` entry inside `mcpServers`:
 
 ```json
 {
@@ -86,76 +94,194 @@ Then add the `orion-dbs` entry inside `mcpServers`. If the file already contains
 ```
 
 Replace:
-- `YOUR_USERNAME` — your macOS/Linux username (on Linux use `/home/YOUR_USERNAME/...`)
-- `YOUR_PROJECT_ID` — your GCP project ID, e.g. `my-project-123456`. Find it in the [Google Cloud Console](https://console.cloud.google.com/) by clicking the project selector in the top bar.
 
-> Schema browsing (`orion_list_datasets`, `orion_list_tables`, `orion_get_db_schema`) works without a billing project. You can omit the `BQ_BILLING_PROJECT` line entirely if you only want to explore schemas.
+- `YOUR_USERNAME` with your user name, in both lines. On Linux the paths start with `/home/YOUR_USERNAME/`.
+- `YOUR_PROJECT_ID` with your Google Cloud project ID, for example `my-project-123456`. The [Google Cloud Console](https://console.cloud.google.com/) shows it in the project selector in the top bar.
 
-BigQuery bills by bytes scanned, not rows returned. The cost estimate uses the approximate on-demand rate of $6.25 per TiB scanned (1 TiB = 2^40 bytes, about 1,100 GB); your actual rate can differ, for example by region or contract. The [BigQuery sandbox](https://cloud.google.com/bigquery/docs/sandbox) gives every account 1 TiB of free query processing per month.
+If the file already lists other servers, put a comma after the previous entry. JSON does not forgive a missing or extra comma.
 
-#### How exports reach your machine
+What the lines mean:
 
-The container is isolated from your file system. When you ask Claude to export query results, files are written to `/data/exports` **inside the container**; the second `-v` line above maps that folder to `~/Downloads/orion-exports` on your machine, so exports appear there instantly. You can use any directory you like — but without this mount, exported files are lost when the container stops (the export tool and the *"check my setup"* health check will both warn you if the mount is missing).
+- The first `-v` line gives the container your Google login file, read-only.
+- The second `-v` line connects your export folder to `/data/exports` inside the container.
+- The `-e` line names the project that is billed for your queries.
 
-Each export of a query result comes with a second file of the same name ending in `.sql` (for example `results.csv` and `results.sql`). It holds the SQL that produced the data, with a header comment giving the date the query ran, the rows returned and the GB billed, so you can cite the query in a methods section or run it again later.
+### 5. Restart Claude Desktop and check
 
-Exports are always written directly into the export folder: a requested filename is reduced to its bare name, its extension is set to the format written (`.csv` for flat results, `.json` for nested ones), and an existing file is not overwritten; a number is appended instead (`results_1.csv` and `results_1.sql`).
+Quit Claude Desktop completely and open it again. **orion-dbs** should be listed under **Settings → Developer**. Then ask in a new chat:
 
-To change the in-container export path, set the `EXPORT_DIR` environment variable (e.g. `-e EXPORT_DIR=/tmp/exports`).
+> Is orion-dbs working? Check my setup.
 
-### 4. Restart Claude Desktop
+This runs a free check of five things: schema files, Google login, billing project, connection to BigQuery, and the export folder. If one of them fails, Claude tells you what to change. Run it again whenever queries stop working.
 
-Quit and reopen Claude Desktop. You should see **orion-dbs** listed under **Settings → Developer → MCP Servers**. If it does not appear, double-check the JSON in your config file for missing commas or mismatched brackets.
+Claude Desktop asks for your permission when a tool is used. Tools that only read are marked as read-only. It is worth keeping the question switched on for the tools that run billed queries or write tables (see [Tools](#tools)).
 
-## Usage
+### Without a Google account
 
-Ask Claude in plain language:
+To look at datasets and schemas only, this shorter entry is enough. Steps 1 and 3 are not needed.
 
-### Check your setup
-- *"Is orion-dbs working? Check my setup."*
+```json
+{
+  "mcpServers": {
+    "orion-dbs": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "ghcr.io/subugoe/orion-mcp:latest"]
+    }
+  }
+}
+```
 
-This runs a free end-to-end health check (schema metadata, credentials, billing project, BigQuery connectivity, export folder mount) and walks you through fixing anything that is missing. Run it once after installation, or whenever queries fail unexpectedly.
+### Other applications
 
-### No Google Cloud account required
-- *"What datasets are available in ORION-DBs?"*
-- *"Show me the schema for the Crossref works table."*
-- *"Which versions of OpenAlex are available and how do the schemas compare?"*
+Any MCP client that can start a local command can use the same `docker run` command. We use it with Claude Desktop and with [orion-chat](https://github.com/subugoe/orion-chat).
 
-### Google Cloud account required
-- *"How many publications were published by University of Göttingen researchers between 2021 and 2025 in journals?"*
-- *"How many open access articles were published in 2023, broken down by OA type?"*
+## Using it
 
-After a query has run, you can keep digging into the stored result without paying for another query:
-- *"Break that down by year."*
-- *"Show me only the rows for 2023."*
-- *"Give me a summary of the columns — how many missing values are there?"*
+Ask in plain language.
 
+Without a Google account:
 
-## Contributing / local development
+- *What datasets are available in ORION-DBs?*
+- *Show me the schema for the Crossref works table.*
+- *Which versions of OpenAlex are available and how do the schemas compare?*
 
-To build the image locally instead of pulling from the registry:
+With a Google Cloud project:
+
+- *How many publications were published by University of Göttingen researchers between 2021 and 2025 in journals?*
+- *How many open access articles were published in 2023, broken down by OA type?*
+
+After a query has run, without paying for another one:
+
+- *Break that down by year.*
+- *Show me only the rows for 2023.*
+- *Give me a summary of the columns. How many missing values are there?*
+- *Export the result as a CSV file.*
+
+Read the SQL before you agree to run it. A query can be valid and still not answer your question; the dry run checks only the former.
+
+## Costs
+
+BigQuery bills by the amount of data a query scans, not by the rows it returns. The estimate uses the approximate on-demand rate of $6.25 per TiB (2^40 bytes, about 1,100 GB). Your rate can differ, for example by region or contract. Every account has 1 TiB of query processing free per month ([BigQuery pricing](https://cloud.google.com/bigquery/pricing)).
+
+The session in the blog post, five queries and an export, scanned about 46 GB, which is under $0.30.
+
+Naming only the columns you need keeps the scan small. For this reason the server refuses `SELECT *` (also `SELECT DISTINCT *` and `table.*`) at the estimate, before you are asked to confirm.
+
+After each run the server reports the amount BigQuery billed. A query repeated unchanged within 24 hours is served from BigQuery's cache at no cost. The use of your LLM is paid for separately, for example through a Claude subscription.
+
+## Exports
+
+When you ask for an export, the server writes the file to `/data/exports` inside the container. The second `-v` line in the config connects that folder to `~/Downloads/orion-exports` on your computer, so the file appears there. Without this line, exported files are lost when the container stops. The export tool and the setup check both warn you if it is missing.
+
+- Flat results are written as `.csv`, nested results as `.json`.
+- Each export of a query result comes with a second file of the same name ending in `.sql`. It holds the SQL that produced the data and a header with the date the query ran, the rows returned and the GB billed. You can cite it in a methods section or run it again later.
+- Files always go directly into the export folder. A requested file name is reduced to its bare name, and an existing file is not overwritten; a number is appended instead (`results_1.csv` and `results_1.sql`).
+
+## Safeguards
+
+**Read-only SQL.** The server runs only single `SELECT` statements. Data-modifying SQL (`INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`, ...) and scripts with several statements are refused in two ways: the server checks the SQL itself, and the dry run must report BigQuery's own classification of the statement as `SELECT`. This holds whatever your Google login would allow. A personal gcloud login cannot be limited to read-only access, so the server does not rely on it; a service account gets the read-only scope.
+
+**Estimate before run.** A query can only run if the same SQL has had a dry run in the current session. Line breaks, spacing and comments may differ; any other difference counts as a new query and needs its own estimate. Whether to run it is your decision in the chat.
+
+**Cost limits.** The estimate refuses queries that would scan more than 500 GB (`MAX_GB_PER_QUERY`). Each run is sent to BigQuery with a cap taken from its estimate, so BigQuery stops a job without charge if it would bill more than you were shown. Jobs carry the label `tool: orion-mcp`, which you can filter on in the Google Cloud billing export.
+
+**Result size.** Results with more than 1,000,000 rows are not downloaded (`MAX_DOWNLOAD_ROWS`). The query is still billed. Aggregate or filter it, or keep the result in BigQuery with `orion_query_to_table`.
+
+**Writing to BigQuery.** This is possible only through two tools in which the destination table is an explicit argument that you confirm in the chat, never through SQL. Both refuse to touch an existing table unless you ask to overwrite it, and both are limited by your own permissions in Google Cloud.
+
+**What the LLM provider sees.** Your questions, the table schemas, the SQL, a preview of each result (up to about 60,000 characters), and the output of the summary, count and slice tools. The full results stay in the container and in the files you export.
+
+## Tools
+
+| Tool | What it does | Cost |
+|---|---|---|
+| `orion_health_check` | Checks the setup | Free |
+| `orion_list_datasets`, `orion_list_tables`, `orion_get_db_schema` | Look up datasets, tables and columns | Free, no Google account |
+| `orion_estimate_query_cost` | Dry run: checks the SQL and estimates the scan | Free |
+| `orion_run_bq_query` | Runs a query and stores the result | Billed |
+| `orion_export_bq_query` | Runs a query and writes the result straight to a file | Billed |
+| `orion_result_summary`, `orion_result_count`, `orion_result_slice` | Work on a stored result | Free |
+| `orion_export_result` | Writes a stored result to a file | Free |
+| `orion_query_to_table` | Runs a query and writes the result to a BigQuery table | Billed; writes to your project |
+| `orion_save_result_to_bq` | Uploads a stored result as a BigQuery table | Free; writes to your project |
+
+The server keeps the 20 most recent results and drops older ones. Asking for a dropped result gives a message that says so. Running its query again stores it under a new name and is billed again, unless BigQuery serves it from its cache. All stored results are gone when Claude Desktop is closed.
+
+## Settings
+
+All settings are optional, except the billing project for running queries. Add them to the config as a further pair before the image name, for example `"-e", "MAX_GB_PER_QUERY=50",`.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `BQ_BILLING_PROJECT` | none | Google Cloud project billed for queries. Without it, only schema browsing works. |
+| `MAX_GB_PER_QUERY` | `500` | Largest scan the estimate accepts, in GB. |
+| `MAX_DOWNLOAD_ROWS` | `1000000` | Largest result that is downloaded, in rows. |
+| `MAX_RESULT_CHARS` | `60000` | Size of the result preview sent to the LLM, in characters. |
+| `MAX_STORED_RESULTS` | `20` | Number of results kept in the session. |
+| `SCHEMA_REFRESH` | `1` | `0` skips the download of schema files at start-up. |
+| `SCHEMA_REPO`, `SCHEMA_PATH` | `orion-dbs-community/website`, `data` | GitHub repository and folder the schema files come from. |
+| `EXPORT_DIR` | `/data/exports` | Export folder inside the container. |
+
+**Schema files.** The image contains the schema files from the day it was built, and it is rebuilt daily. At start-up the server also downloads the current files. If that fails, it uses the ones in the image. With `SCHEMA_REFRESH=0` the server starts in about a second and works without a network connection for schema browsing.
+
+## Updating
+
+```bash
+docker pull ghcr.io/subugoe/orion-mcp:latest
+```
+
+Then quit and reopen Claude Desktop.
+
+## Troubleshooting
+
+**orion-dbs is not listed, or shows an error, in Claude Desktop.**
+
+- Check that Docker Desktop is running.
+- Check the config file for a missing comma or bracket.
+- If Claude Desktop cannot find `docker`, replace `"docker"` in `"command"` with its full path. `which docker` in the Terminal shows it, for example `/usr/local/bin/docker`.
+
+**The setup check reports missing Google credentials.**
+
+- Run `gcloud auth application-default login` again, then restart Claude Desktop.
+- Look at `~/.config/gcloud/`. If `application_default_credentials.json` is a folder and not a file, delete the folder and log in again (see step 1).
+- Check the user name in the first `-v` line.
+
+**Queries fail although the login works.**
+
+- Check `BQ_BILLING_PROJECT`: it must be the project ID, not the project name.
+- The BigQuery API must be enabled for the project in the Google Cloud Console.
+
+**An exported file does not appear.**
+
+- Check that the folder in the second `-v` line exists and that the path is spelled as in step 3.
+
+**A query is refused as too large.**
+
+- Ask for fewer columns or a filter, or raise `MAX_GB_PER_QUERY`.
+
+If Claude misunderstands your question, returns unexpected results or picks the wrong dataset, please open a GitHub issue that says what you asked and what happened. This helps improve the tool descriptions that guide the LLM.
+
+## Development
+
+To build the image yourself:
 
 ```bash
 git clone https://github.com/subugoe/orion-mcp
 cd orion-mcp
-docker build -t orion-mcp_mcp .
+docker build -t orion-mcp:dev .
 ```
 
-Then use `orion-mcp_mcp` as the image name in your Claude Desktop config.
+Then use `orion-mcp:dev` as the image name in the config.
 
-The server logic lives in `R/functions.R`; `server.R` handles authentication and registers the MCP tools. Run the unit tests from the repo root before opening a pull request:
+The server logic is in `R/functions.R`. `server.R` handles the Google login and registers the MCP tools. `refresh-schemas.sh` downloads the schema files, at build time and at start-up. The server is written in R with [ellmer](https://ellmer.tidyverse.org/), [mcptools](https://github.com/posit-dev/mcptools) and [bigrquery](https://bigrquery.r-dbi.org/).
+
+Run the tests from the repository root before opening a pull request:
 
 ```bash
 Rscript tests/test-functions.R
 ```
 
-The tests need the R packages `testthat`, `dplyr`, `purrr`, `stringr`, `readr`, `tibble`, `glue`, `jsonlite` and `bigrquery`, plus `curl` and `jq` for the schema refresh script.
-
-The same tests run in CI on every pull request and gate the image build, so a regression cannot reach the published image. They cover everything except the BigQuery round-trip itself, which the built-in health check (*"check my setup"*) verifies at install time.
-
-The server is implemented in R using the [ellmer](https://ellmer.tidyverse.org/) and [mcptools](https://github.com/posit-dev/mcptools) packages. Contributions and bug reports are welcome via GitHub issues.
-
-If Claude misunderstands your question, produces unexpected results, or queries the wrong dataset, please open a GitHub issue describing what you asked and what happened. That kind of feedback is just as valuable as code contributions, because it helps improve the tool descriptions that guide the LLM.
+They need the R packages `testthat`, `dplyr`, `purrr`, `stringr`, `readr`, `tibble`, `glue`, `jsonlite` and `bigrquery`, and `curl` and `jq` for the schema refresh script. The same tests run on every pull request and must pass before an image is published. They cover everything except the exchange with BigQuery itself, which the setup check verifies on your machine.
 
 ## Contact
 
