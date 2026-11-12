@@ -28,31 +28,9 @@ if (is.null(auth_scope)) {
 
 schema_data <- load_schema_data()
 
-# Silence "Method not found" for prompts/list and resources/list.
-# mcptools declares these capabilities but doesn't implement the handlers.
-# Remove once https://github.com/posit-dev/mcptools/issues/59 is fixed.
-local({
-  orig <- mcptools:::handle_message_from_client
-  assignInNamespace(
-    "handle_message_from_client",
-    function(line) {
-      msg <- tryCatch(jsonlite::parse_json(line), error = function(e) NULL)
-      result <- if (!is.null(msg$method)) {
-        switch(msg$method,
-          "prompts/list"   = list(prompts = list()),
-          "resources/list" = list(resources = list()),
-          NULL
-        )
-      }
-      if (!is.null(result)) {
-        mcptools:::cat_json(list(jsonrpc = "2.0", id = msg$id, result = result))
-        return(invisible(NULL))
-      }
-      orig(line)
-    },
-    ns = "mcptools"
-  )
-})
+# Answer prompts/list and resources/list with empty lists (mcptools issue
+# 59); never stops the server, see R/functions.R.
+patch_mcptools_list_methods()
 
 mcp_server(
   # Tools run in this process; no need for mcptools' external R-session routing.

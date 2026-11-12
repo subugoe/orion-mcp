@@ -694,6 +694,28 @@ test_that("tools/list carries titles and read-only/destructive hints", {
   }
 })
 
+test_that("prompts/list and resources/list get empty lists, not an error", {
+  skip_if_not(has_server_pkgs, "ellmer and mcptools are needed")
+  replies <- run_server(c(
+    '{"jsonrpc":"2.0","id":1,"method":"prompts/list"}',
+    '{"jsonrpc":"2.0","id":2,"method":"resources/list"}',
+    '{"jsonrpc":"2.0","id":3,"method":"tools/list"}'
+  ))
+  expect_identical(replies[["1"]]$result, list(prompts = list()))
+  expect_identical(replies[["2"]]$result, list(resources = list()))
+  # Other requests still reach mcptools' own handler
+  expect_length(replies[["3"]]$result$tools, 13)
+  expect_equal(replies[["999"]]$error$code, -32601)
+})
+
+test_that("a changed mcptools internal skips the patch with a warning", {
+  expect_message(
+    ok <- patch_mcptools_list_methods(handler = "no_such_internal_function"),
+    "Warning: mcptools patch .* not applied"
+  )
+  expect_false(ok)
+})
+
 test_that("health check reports per-layer status without credentials", {
   health <- fromJSON(orion_health_check(), simplifyVector = FALSE)
 

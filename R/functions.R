@@ -975,6 +975,54 @@ bq_adc_auth <- function() {
   NULL
 }
 
+# ---- mcptools patch -----------------------------------------------------------
+
+# mcptools declares the prompts and resources capabilities but answers
+# prompts/list and resources/list with "Method not found", which some
+# clients show as an error. This answers both with empty lists. Still needed
+# with mcptools 1.0.3; remove once
+# https://github.com/posit-dev/mcptools/issues/59 is fixed. It replaces an
+# internal function, so if mcptools renames it the patch is skipped with a
+# warning on stderr instead of stopping the server. Called by server.R.
+patch_mcptools_list_methods <- function(handler = "handle_message_from_client") {
+  tryCatch(
+    {
+      ns <- asNamespace("mcptools")
+      orig <- get(handler, envir = ns, inherits = FALSE)
+      cat_json <- get("cat_json", envir = ns, inherits = FALSE)
+      stopifnot(is.function(orig), is.function(cat_json))
+      assignInNamespace(
+        handler,
+        function(line) {
+          msg <- tryCatch(jsonlite::parse_json(line), error = function(e) NULL)
+          result <- if (is.list(msg) && is.character(msg$method)) {
+            switch(msg$method,
+              "prompts/list"   = list(prompts = list()),
+              "resources/list" = list(resources = list()),
+              NULL
+            )
+          }
+          if (!is.null(result)) {
+            cat_json(list(jsonrpc = "2.0", id = msg$id, result = result))
+            return(invisible(NULL))
+          }
+          orig(line)
+        },
+        ns = "mcptools"
+      )
+      invisible(TRUE)
+    },
+    error = function(e) {
+      message(glue(
+        "Warning: mcptools patch for prompts/list and resources/list not ",
+        "applied ({conditionMessage(e)}); clients may report 'Method not ",
+        "found' for these two requests. Other requests are not affected."
+      ))
+      invisible(FALSE)
+    }
+  )
+}
+
 # ---- Health check ------------------------------------------------------------
 
 orion_health_check <- function() {
