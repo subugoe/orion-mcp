@@ -170,6 +170,8 @@ mcp_server(
         "SQL string. ",
         "Every result is stored in the R session under a stable name ",
         "(q1, q2, ...) and only a size-capped preview is returned inline. ",
+        "The most recent 20 results are kept (MAX_STORED_RESULTS); older ",
+        "ones are dropped. ",
         "If the response says the preview was TRUNCATED, do not reason ",
         "from the partial rows — use orion_result_summary, ",
         "orion_result_count, or orion_result_slice on the stored result, ",

@@ -491,22 +491,59 @@ execute_bq_query <- function(sql) {
 results_env <- new.env(parent = emptyenv())
 result_counter <- 0L
 
-store_result <- function(df) {
+# Results stay in memory until the server stops, so only the most recent
+# ones are kept. Read at store time, after the query has been paid for, so
+# a bad value falls back to the default instead of losing the result.
+stored_results_limit <- function() {
+  tryCatch(
+    floor(read_limit_env("MAX_STORED_RESULTS", "20")),
+    error = function(e) {
+      message(glue("{conditionMessage(e)} Keeping the default of 20 results."))
+      20
+    }
+  )
+}
+
+result_number <- function(name) {
+  if (!str_detect(name, "^q[0-9]+$")) return(NA_integer_)
+  as.integer(str_remove(name, "^q"))
+}
+
+stored_result_names <- function() {
+  stored <- ls(results_env)
+  stored[order(map_int(stored, result_number))]
+}
+
+store_result <- function(df, max_results = stored_results_limit()) {
   result_counter <<- result_counter + 1L
   name <- as.character(glue("q{result_counter}"))
   assign(name, df, envir = results_env)
+
+  stored <- stored_result_names()
+  old <- stored[map_int(stored, result_number) <= result_counter - max(1, max_results)]
+  rm(list = old, envir = results_env)
   name
 }
 
 get_result <- function(name) {
   if (!exists(name, envir = results_env, inherits = FALSE)) {
-    stored <- ls(results_env)
-    hint <- if (length(stored) > 0) {
+    stored <- stored_result_names()
+    available <- if (length(stored) > 0) {
       glue("Available results: {str_flatten(stored, ', ')}.")
     } else {
       "No query results are stored in this session yet — run a query first."
     }
-    stop(glue("No stored result named '{name}'. {hint}"))
+    number <- result_number(name)
+    if (!is.na(number) && number <= result_counter) {
+      stop(glue(
+        "Result '{name}' is no longer stored: the server keeps only the ",
+        "{stored_results_limit()} most recent results (MAX_STORED_RESULTS) ",
+        "and has dropped older ones. {available} To get '{name}' back, run ",
+        "its SQL again; tell the user first that this is billed again ",
+        "unless BigQuery serves it from its 24-hour cache."
+      ))
+    }
+    stop(glue("No stored result named '{name}'. {available}"))
   }
   get(name, envir = results_env, inherits = FALSE)
 }

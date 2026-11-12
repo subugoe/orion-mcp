@@ -213,6 +213,40 @@ test_that("results are stored under stable names and retrievable", {
   expect_error(get_result("q999"), "No stored result named 'q999'")
 })
 
+test_that("only the most recent results are kept", {
+  first <- result_counter + 1L
+  names <- map_chr(1:5, \(i) store_result(tibble(i = i), max_results = 3))
+  expect_equal(names, paste0("q", first:(first + 4)))
+  expect_equal(tail(stored_result_names(), 3), names[3:5])
+  expect_length(stored_result_names(), 3)
+  expect_equal(get_result(names[5])$i, 5)
+
+  err <- expect_error(get_result(names[1]))
+  expect_match(conditionMessage(err), "no longer stored")
+  expect_match(conditionMessage(err), "MAX_STORED_RESULTS")
+  expect_match(conditionMessage(err), str_flatten(names[3:5], ", "), fixed = TRUE)
+  # A name that never existed gets the plain message
+  expect_error(get_result("q99999"), "No stored result named 'q99999'")
+  expect_error(get_result("results"), "No stored result named 'results'")
+})
+
+test_that("MAX_STORED_RESULTS is read from the environment, with a safe fallback", {
+  withr::with_envvar(c(MAX_STORED_RESULTS = "2"), {
+    expect_equal(stored_results_limit(), 2)
+    store_result(tibble(x = 1))
+    store_result(tibble(x = 2))
+    store_result(tibble(x = 3))
+    expect_length(stored_result_names(), 2)
+  })
+  withr::with_envvar(c(MAX_STORED_RESULTS = NA), {
+    expect_equal(stored_results_limit(), 20)
+  })
+  withr::with_envvar(c(MAX_STORED_RESULTS = "many"), {
+    expect_message(limit <- stored_results_limit(), "Keeping the default of 20")
+    expect_equal(limit, 20)
+  })
+})
+
 make_flat_result <- function() {
   tibble(
     institution = rep(paste("University", sprintf("%03d", 1:100)), each = 5),
