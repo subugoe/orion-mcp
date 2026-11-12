@@ -3,9 +3,9 @@ FROM rocker/r-ver:4.5.3
 # The base image is Ubuntu 24.04 (noble), so the package repo must be a noble
 # one; the old line pointed at jammy (22.04) binaries. This is a dated
 # Posit Package Manager snapshot, so rebuilds get the same package versions.
-# 2026-09-01 gives bigrquery 1.6.2, mcptools 1.0.2, ellmer 0.4.2. Keep it in
+# 2026-11-10 gives bigrquery 1.6.2, mcptools 1.0.3, ellmer 0.5.1. Keep it in
 # sync with the test job in .github/workflows/docker-publish.yml.
-RUN echo 'options(repos = c(CRAN = "https://p3m.dev/cran/__linux__/noble/2026-09-01"))' >> /usr/local/lib/R/etc/Rprofile.site
+RUN echo 'options(repos = c(CRAN = "https://p3m.dev/cran/__linux__/noble/2026-11-10"))' >> /usr/local/lib/R/etc/Rprofile.site
 
 # curl and jq are needed by refresh-schemas.sh; libuv1t64 is the one run-time
 # library the binary R packages need (fs) that the base image does not have.

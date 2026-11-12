@@ -33,7 +33,7 @@ jobs:
       - name: Install R packages
         run: |
           install2.r --error --skipinstalled \
-            --repos https://p3m.dev/cran/__linux__/noble/2026-09-01 \
+            --repos https://p3m.dev/cran/__linux__/noble/2026-11-10 \
             testthat dplyr purrr stringr readr tibble glue jsonlite \
             gargle bigrquery
 
