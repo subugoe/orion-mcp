@@ -301,6 +301,17 @@ test_that("render_rows serialises only rows that can fit the budget", {
   expect_gt(rendered$rows_shown, 0)
   expect_lte(nchar(rendered$text), 300)
 
+  # Nested rows are serialised in chunks: at a budget that fits fewer than
+  # 500 rows, row 600 is never reached (budget %/% 3 alone would allow it)
+  late <- tibble(
+    id = 1:1000,
+    x = c(as.list(1:599), list(new.env()), as.list(601:1000))
+  )
+  rendered <- render_rows(late, budget = 3000)
+  expect_true(rendered$truncated)
+  expect_lt(rendered$rows_shown, 500)
+  expect_lte(nchar(rendered$text), 3000)
+
   # truncated is judged against the full row count, not the serialised part
   flat <- tibble(a = rep("x", 100))
   rendered <- render_rows(flat, budget = 50)

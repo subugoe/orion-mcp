@@ -628,11 +628,19 @@ render_rows <- function(df, budget = MAX_RESULT_CHARS) {
   df <- head(df, min(total_rows, max_rows))
 
   if (nested) {
+    # Real JSON lines are far longer than three characters, so serialise
+    # 500 rows at a time and stop once the budget is used up.
     header <- NULL
-    body <- map_chr(
-      seq_len(nrow(df)),
-      \(i) toJSON(as.list(df[i, ]), auto_unbox = TRUE)
-    )
+    body <- character()
+    used <- 0L
+    starts <- seq(1L, by = 500L, length.out = ceiling(nrow(df) / 500))
+    for (start in starts) {
+      rows <- start:min(start + 499L, nrow(df))
+      chunk <- map_chr(rows, \(i) toJSON(as.list(df[i, ]), auto_unbox = TRUE))
+      body <- c(body, chunk)
+      used <- used + sum(nchar(chunk) + 1L)
+      if (used > budget) break
+    }
   } else {
     flat <- df |>
       mutate(across(where(is.character), \(x) str_replace_all(x, "[\r\n]+", " ")))
