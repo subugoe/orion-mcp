@@ -882,13 +882,19 @@ export_mount_note <- function() {
 # appended instead (results.csv, results_1.csv, ...). `also` lists the
 # extensions of companion files (the .sql sidecar) that must be free too,
 # so the data file and its sidecar always share a name.
+# A data extension the model may add to the name; any other dot is part of
+# the name the user asked for (top10.2024, results.v2).
+data_extension <- regex("\\.(csv|json|sql|tsv|txt)$", ignore_case = TRUE)
+
 export_path <- function(filename, ext, dir = EXPORT_DIR, also = character()) {
   stem <- if (is.null(filename)) "" else {
     filename |>
       basename() |>
-      tools::file_path_sans_ext()
+      str_remove(data_extension) |>
+      str_trim() |>
+      str_remove("^\\.+")  # no hidden files, and ".." is not a name
   }
-  if (stem %in% c("", ".", "..")) {
+  if (stem == "") {
     stem <- glue("orion_export_{format(Sys.time(), '%Y%m%d_%H%M%S')}")
   }
 

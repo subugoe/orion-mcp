@@ -412,6 +412,16 @@ test_that("export filenames get the extension of the format written", {
   expect_equal(basename(export_path("results", "csv", dir)), "results.csv")
   expect_equal(basename(export_path("results.CSV", "json", dir)), "results.json")
 
+  # Only a data extension goes; other dots are part of the name
+  name_for <- \(filename, ext = "csv") basename(export_path(filename, ext, dir))
+  expect_equal(name_for("top10.2024"), "top10.2024.csv")
+  expect_equal(name_for("results.v2.csv"), "results.v2.csv")
+  expect_equal(name_for("results.tar.gz"), "results.tar.gz.csv")
+  expect_equal(name_for("results.JSON"), "results.csv")
+  expect_equal(name_for(".hidden"), "hidden.csv")
+  for (blank in c(".csv", "  ", "", "."))
+    expect_match(name_for(blank), "^orion_export_\\d{8}_\\d{6}\\.csv$", label = blank)
+
   nested <- store_result(tibble(doi = "10.1/a", authors = list(list("A"))))
   out <- fromJSON(orion_export_result(nested, "nested.csv"), simplifyVector = FALSE)
   expect_equal(basename(out$path), "nested.json")
@@ -474,6 +484,12 @@ test_that("exports of query results carry a .sql file with the query", {
   expect_equal(basename(out_nested$path), "nested_q.json")
   expect_equal(basename(out_nested$sql_path), "nested_q.sql")
   expect_match(read_file(out_nested$sql_path), "-- GB billed: 0\n", fixed = TRUE)
+
+  # A dot in the name stays in both files
+  dotted <- fromJSON(orion_export_result(name, "a.b"), simplifyVector = FALSE)
+  expect_equal(basename(dotted$path), "a.b.csv")
+  expect_equal(basename(dotted$sql_path), "a.b.sql")
+  expect_match(read_file(dotted$sql_path), "-- Data file: a.b.csv", fixed = TRUE)
 
   # Results stored without a query get no .sql file
   plain <- fromJSON(orion_export_result(store_result(tibble(x = 1)), "plain.csv"),
