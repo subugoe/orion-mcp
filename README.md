@@ -246,6 +246,8 @@ docker pull ghcr.io/subugoe/orion-mcp:latest
 
 Then quit and reopen Claude Desktop.
 
+`latest` follows the main branch and is rebuilt every day. To stay on one release, use its version as the image tag, for example `ghcr.io/subugoe/orion-mcp:0.1.0`, in the `docker pull` command and in the config. [NEWS.md](NEWS.md) lists the changes per release.
+
 ## Troubleshooting
 
 **orion-dbs is not listed, or shows an error, in Claude Desktop.**
@@ -295,7 +297,7 @@ Run the tests from the repository root before opening a pull request:
 Rscript tests/test-functions.R
 ```
 
-They need the R packages `testthat`, `dplyr`, `purrr`, `stringr`, `readr`, `tibble`, `glue`, `jsonlite` and `bigrquery`, and `curl` and `jq` for the schema refresh script. The same tests run on every pull request and must pass before an image is published. They cover everything except the exchange with BigQuery itself, which the setup check verifies on your machine.
+They need the R packages `testthat`, `dplyr`, `purrr`, `stringr`, `readr`, `tibble`, `glue`, `jsonlite` and `bigrquery`, and `curl` and `jq` for the schema refresh script. The tests that start the server also need `ellmer` and `mcptools`; without them they are skipped locally, and in CI a missing package fails the run. The same tests run on every pull request and must pass before an image is published. They cover everything except the exchange with BigQuery itself, which the setup check verifies on your machine.
 
 ## Contact
 
