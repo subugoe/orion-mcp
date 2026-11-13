@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - main
+    # A release tag (v0.1.0) publishes the image as 0.1.0 and 0.1 as well.
+    tags:
+      - "v*"
   pull_request:
   workflow_dispatch:
   # Rebuild every day at 07:00 UTC, one hour after the ORION-DBs website
@@ -146,6 +149,8 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=sha-
 
       - name: Create and push manifest
