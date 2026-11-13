@@ -756,6 +756,40 @@ test_that("large results are not downloaded", {
   })
 })
 
+test_that("run and export messages say the result is stored in the server", {
+  # Stand-in for the BigQuery round-trip, restored afterwards
+  real_execute <- execute_bq_query
+  assign("execute_bq_query", function(sql) {
+    list(
+      result = tibble(year = 2024:2025, n = c(3L, 5L)),
+      cache_hit = FALSE,
+      billing_note = "BigQuery billed 0.01 GB for this run.",
+      run_at = Sys.time(),
+      gb_billed = 0.01
+    )
+  }, envir = globalenv())
+  withr::defer(assign("execute_bq_query", real_execute, envir = globalenv()))
+
+  real_dir <- EXPORT_DIR
+  assign("EXPORT_DIR", withr::local_tempdir(), envir = globalenv())
+  withr::defer(assign("EXPORT_DIR", real_dir, envir = globalenv()))
+
+  sql <- "SELECT year, COUNT(*) AS n FROM `p.d.t` GROUP BY year"
+  run_text <- orion_run_bq_query(sql)
+  expect_match(run_text, "orion-mcp server", fixed = TRUE)
+  expect_no_match(run_text, "in the R session", fixed = TRUE)
+  expect_no_match(run_text, "local R session", fixed = TRUE)
+  # The user is told to export before working with the data elsewhere
+  expect_match(run_text, "cannot open '.+' in their own R session")
+  expect_match(run_text, "export it first", fixed = TRUE)
+
+  out <- fromJSON(orion_export_bq_query(sql, "stored_note.csv"),
+                  simplifyVector = FALSE)
+  expect_true(file.exists(out$path))
+  expect_match(out$message, "orion-mcp server", fixed = TRUE)
+  expect_no_match(out$message, "R session", fixed = TRUE)
+})
+
 # ---- server.R over stdio (no credentials, no schemas, no network) ----------
 
 has_server_pkgs <- requireNamespace("ellmer", quietly = TRUE) &&
@@ -802,6 +836,10 @@ test_that("tools/list carries titles and read-only/destructive hints", {
   ann <- set_names(map(tools, "annotations"), map_chr(tools, "name"))
 
   expect_true(all(map_lgl(ann, \(a) is.character(a$title) && nzchar(a$title))))
+
+  # Results live in the server process; the user cannot reach them from
+  # their own R session, so no description may suggest that
+  for (t in tools) expect_no_match(t$description, "R session", fixed = TRUE)
 
   read_only <- c(
     "orion_health_check", "orion_list_datasets", "orion_list_tables",

@@ -655,15 +655,16 @@ orion_run_bq_query <- function(query) {
     glue(
       "Showing only the first {rendered$rows_shown} of {nrow(result)} rows — ",
       "the full output exceeds the response budget. The COMPLETE result is ",
-      "stored in the R session as '{name}'. Do NOT draw conclusions from ",
-      "the truncated rows alone: use orion_result_summary, ",
+      "stored in the orion-mcp server as '{name}'. Do NOT draw conclusions ",
+      "from the truncated rows alone: use orion_result_summary, ",
       "orion_result_count, or orion_result_slice on '{name}' to analyse ",
       "the full data, or orion_export_result to save it to a file (free — ",
-      "the data is already in the R session)."
+      "the data is already stored in the orion-mcp server)."
     )
   } else {
     glue(
-      "Complete result shown below; also stored in the R session as '{name}'."
+      "Complete result shown below; also stored in the orion-mcp server ",
+      "as '{name}'."
     )
   }
 
@@ -676,9 +677,11 @@ orion_run_bq_query <- function(query) {
     "(1) summarise the key findings in plain language; ",
     "(2) explain in one or two jargon-free sentences how the query worked — ",
     "which tables it read and what the filters, joins, or aggregations did; ",
-    "(3) mention that the full data is held in the local R session as ",
-    "'{name}' (it was not uploaded anywhere) and can be analysed further ",
-    "or exported to a file on request. ",
+    "(3) mention that the full result is stored in the orion-mcp server ",
+    "as '{name}' (only a preview was sent to you) and can be analysed ",
+    "further or exported to a file on request. The user cannot open ",
+    "'{name}' in their own R session; to work with it in R or another ",
+    "tool, export it first. ",
     "Present results as plain text and simple markdown tables in the ",
     "chat — do NOT create charts, artifacts, or interactive ",
     "visualisations unless the user explicitly asks for one.\n",
@@ -996,8 +999,8 @@ orion_export_bq_query <- function(query, filename = NULL) {
       "{export_rename_note(export, filename)}",
       "{export_sql_note(export)}",
       "{export_mount_note()} ",
-      "The result is also stored in the R session as '{name}' for the ",
-      "analysis tools. ",
+      "The result is also stored in the orion-mcp server as '{name}' for ",
+      "the analysis tools. ",
       "SQL:\n{str_trim(query)}\n",
       "When presenting this to the user, say in plain language what was ",
       "exported, where the files appear on their machine, and briefly ",
