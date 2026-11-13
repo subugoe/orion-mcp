@@ -509,7 +509,16 @@ test_that("SELECT * guard blocks wildcards but not regex literals or COUNT(*)", 
     "SELECT AS STRUCT * FROM t",
     "SELECT AS VALUE * FROM t",
     "select distinct as struct * from t",
-    "WITH x AS (SELECT * FROM t) SELECT a FROM x"
+    "WITH x AS (SELECT * FROM t) SELECT a FROM x",
+    "SELECT doi, * FROM t",
+    "SELECT doi,\n  *\nFROM t",
+    "SELECT `t`.* FROM `p.d.t` AS t",
+    "SELECT t . * FROM t",
+    "SELECT t.\n* FROM t",
+    "SELECT * EXCEPT (a) FROM t",
+    "SELECT STRUCT(t.*) FROM t",
+    "SELECT a /* c */ , /* d */ * FROM t",
+    "SELECT 1 AS a, * FROM UNNEST([1, 2]) AS x"
   )
   for (sql in blocked) {
     expect_error(guard(sql), "SELECT \\* and table.\\* are not allowed", label = sql)
@@ -520,7 +529,16 @@ test_that("SELECT * guard blocks wildcards but not regex literals or COUNT(*)", 
     "SELECT COUNT(*) FROM t",
     "SELECT DISTINCT COUNT(*) AS n FROM t",
     "SELECT year, COUNT(*) AS n FROM t GROUP BY year",
-    "SELECT doi FROM t -- not SELECT * here"
+    "SELECT doi FROM t -- not SELECT * here",
+    "SELECT COUNT( * ) FROM t",
+    "SELECT a FROM `p.d.events_*`",
+    "SELECT a FROM `p.d.*`",
+    "SELECT value * 2 AS v, a * b AS c FROM t",
+    "SELECT t.a * t.b FROM t",
+    "SELECT a, 2 * b FROM t",
+    "SELECT a, (b) * c FROM t",
+    "SELECT 1.5 * x FROM t",
+    "SELECT x FROM t WHERE note = ', *'"
   )
   for (sql in allowed) {
     expect_no_error(guard(sql))
@@ -532,8 +550,16 @@ test_that("cost estimate refuses SELECT * before contacting BigQuery", {
     # Fails before bq_dry_run_stats(), so no request is made
     expect_error(orion_estimate_query_cost("SELECT DISTINCT * FROM `p.d.t`"),
                  "SELECT \\* and table.\\* are not allowed")
+    # A star as a later item, the form a model tries after a plain SELECT *
+    expect_error(
+      orion_estimate_query_cost("SELECT 1 AS a, * FROM UNNEST([1, 2]) AS x"),
+      "SELECT \\* and table.\\* are not allowed"
+    )
   })
   expect_false("SELECT DISTINCT * FROM `p.d.t`" %in% names(dry_run_cache))
+  expect_false(
+    "SELECT 1 AS a, * FROM UNNEST([1, 2]) AS x" %in% names(dry_run_cache)
+  )
 })
 
 test_that("normalize_sql collapses whitespace outside literals", {

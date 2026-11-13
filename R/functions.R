@@ -356,14 +356,24 @@ assert_read_only_sql <- function(sql) {
 
 # Expects SQL with literals and comments blanked (the output of
 # assert_read_only_sql), so '.*' inside a regex literal does not count.
-# Covers SELECT [ALL|DISTINCT] [AS STRUCT|AS VALUE] * and table.*;
-# COUNT(*) is not a column wildcard and stays allowed.
+# Names in backticks are replaced first, so a wildcard table such as
+# `p.d.events_*` is not taken for a column wildcard. Covers
+# SELECT [ALL|DISTINCT] [AS STRUCT|AS VALUE] *, a star as a later item
+# (a, *) and table.* (also `t`.* and t . *). A star after a comma cannot
+# be a multiplication, and COUNT(*) has a bracket before the star, so
+# arithmetic and counts stay allowed. SELECT t FROM table AS t (the whole
+# row as a struct) cannot be told from a column by the text and passes.
 assert_no_select_star <- function(sql_no_strings) {
+  sql <- str_replace_all(sql_no_strings, "`[^`]*`", "x")
   pattern <- regex(
-    "SELECT\\s+(ALL\\s+|DISTINCT\\s+)?(AS\\s+(STRUCT|VALUE)\\s+)?\\*|\\w+\\.\\*",
+    str_flatten(c(
+      "SELECT\\s+(ALL\\s+|DISTINCT\\s+)?(AS\\s+(STRUCT|VALUE)\\s+)?\\*",
+      ",\\s*\\*",
+      "\\.\\s*\\*"
+    ), "|"),
     ignore_case = TRUE
   )
-  if (str_detect(sql_no_strings, pattern)) {
+  if (str_detect(sql, pattern)) {
     stop(glue(
       "SELECT * and table.* are not allowed — specify only the columns ",
       "needed to avoid scanning unnecessary data."

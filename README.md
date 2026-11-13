@@ -165,7 +165,7 @@ BigQuery bills by the amount of data a query scans, not by the rows it returns. 
 
 The session in the blog post, five queries and an export, scanned about 46 GB, which is under $0.30.
 
-Naming only the columns you need keeps the scan small. For this reason the server refuses `SELECT *` (also `SELECT DISTINCT *` and `table.*`) at the estimate, before you are asked to confirm.
+Naming only the columns you need keeps the scan small. For this reason the server refuses `SELECT *` (also `SELECT DISTINCT *`, `SELECT a, *` and `table.*`) at the estimate, before you are asked to confirm. The check reads the SQL text. It does not catch a query that selects a whole row through its table alias (`SELECT t FROM table AS t`).
 
 After each run the server reports the amount BigQuery billed. A query repeated unchanged within 24 hours is served from BigQuery's cache at no cost. The use of your LLM is paid for separately, for example through a Claude subscription.
 
