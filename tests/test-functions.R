@@ -228,6 +228,8 @@ test_that("only the most recent results are kept", {
   # A name that never existed gets the plain message
   expect_error(get_result("q99999"), "No stored result named 'q99999'")
   expect_error(get_result("results"), "No stored result named 'results'")
+  expect_error(get_result("q0"), "No stored result named 'q0'")
+  expect_error(get_result("q007"), "No stored result named 'q007'")
 })
 
 test_that("MAX_STORED_RESULTS is read from the environment, with a safe fallback", {
@@ -240,6 +242,10 @@ test_that("MAX_STORED_RESULTS is read from the environment, with a safe fallback
   })
   withr::with_envvar(c(MAX_STORED_RESULTS = NA), {
     expect_equal(stored_results_limit(), 20)
+  })
+  # The server keeps at least one result, and says so
+  withr::with_envvar(c(MAX_STORED_RESULTS = "0.5"), {
+    expect_equal(stored_results_limit(), 1)
   })
   withr::with_envvar(c(MAX_STORED_RESULTS = "many"), {
     expect_message(limit <- stored_results_limit(), "Keeping the default of 20")

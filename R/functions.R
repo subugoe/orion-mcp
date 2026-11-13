@@ -549,9 +549,10 @@ result_counter <- 0L
 # Results stay in memory until the server stops, so only the most recent
 # ones are kept. Read at store time, after the query has been paid for, so
 # a bad value falls back to the default instead of losing the result.
+# At least 1, so that the number in messages is the number kept.
 stored_results_limit <- function() {
   tryCatch(
-    floor(read_limit_env("MAX_STORED_RESULTS", "20")),
+    max(1, floor(read_limit_env("MAX_STORED_RESULTS", "20"))),
     error = function(e) {
       message(glue("{conditionMessage(e)} Keeping the default of 20 results."))
       20
@@ -588,7 +589,7 @@ store_result <- function(df, sql = NULL, run_at = Sys.time(), gb_billed = NULL,
   }
 
   stored <- stored_result_names()
-  old <- stored[map_int(stored, result_number) <= result_counter - max(1, max_results)]
+  old <- stored[map_int(stored, result_number) <= result_counter - max_results]
   rm(list = old, envir = results_env)
   rm(list = intersect(old, ls(results_meta)), envir = results_meta)
   name
@@ -605,8 +606,11 @@ get_result <- function(name) {
     } else {
       "No query results are stored in this session yet — run a query first."
     }
+    # Dropped only if the server once gave this exact name: not q0 or q007.
     number <- result_number(name)
-    if (!is.na(number) && number <= result_counter) {
+    was_stored <- !is.na(number) && number >= 1 && number <= result_counter &&
+      identical(name, paste0("q", number))
+    if (was_stored) {
       stop(glue(
         "Result '{name}' is no longer stored: the server keeps only the ",
         "{stored_results_limit()} most recent results (MAX_STORED_RESULTS) ",
