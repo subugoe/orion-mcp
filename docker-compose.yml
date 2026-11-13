@@ -1,5 +1,5 @@
 services:
-  # MCP server — an MCP client connects to this via stdio.
+  # MCP server; an MCP client connects to it via stdio.
   # To use: add the equivalent `docker run` command to the client's MCP config.
   mcp:
     build: .

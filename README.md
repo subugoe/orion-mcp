@@ -63,7 +63,7 @@ Files you ask Claude to export will appear here. Any folder works; use the same 
 
 ### 4. Add the server to Claude Desktop
 
-In Claude Desktop, open **Settings → Developer → Edit Config**. This shows the file `claude_desktop_config.json`. Open it in a text editor. If the menu entry is missing, the file is here:
+In Claude Desktop, open **Settings > Developer > Edit Config**. This shows the file `claude_desktop_config.json`. Open it in a text editor. If the menu entry is missing, the file is here:
 
 - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - Linux: `~/.config/Claude/claude_desktop_config.json`
@@ -98,7 +98,7 @@ Replace:
 - `YOUR_USERNAME` with your user name, in both lines. On Linux the paths start with `/home/YOUR_USERNAME/`.
 - `YOUR_PROJECT_ID` with your Google Cloud project ID, for example `my-project-123456`. The [Google Cloud Console](https://console.cloud.google.com/) shows it in the project selector in the top bar.
 
-If the file already lists other servers, put a comma after the previous entry. JSON does not forgive a missing or extra comma.
+If the file already lists other servers, put a comma after the previous entry. A missing or extra comma makes the file invalid.
 
 What the lines mean:
 
@@ -108,13 +108,13 @@ What the lines mean:
 
 ### 5. Restart Claude Desktop and check
 
-Quit Claude Desktop completely and open it again. **orion-dbs** should be listed under **Settings → Developer**. Then ask in a new chat:
+Quit Claude Desktop completely and open it again. **orion-dbs** should be listed under **Settings > Developer**. Then ask in a new chat:
 
 > Is orion-dbs working? Check my setup.
 
 This runs a free check of five things: schema files, Google login, billing project, connection to BigQuery, and the export folder. If one of them fails, Claude tells you what to change. Run it again whenever queries stop working.
 
-Claude Desktop asks for your permission when a tool is used. Tools that only read are marked as read-only. It is worth keeping the question switched on for the tools that run billed queries or write tables (see [Tools](#tools)).
+Claude Desktop asks for your permission when a tool is used. Tools that only read are marked as read-only. Keep the question switched on for the tools that run billed queries or write tables (see [Tools](#tools)).
 
 ### Without a Google account
 
@@ -157,7 +157,7 @@ After a query has run, without paying for another one:
 - *Give me a summary of the columns. How many missing values are there?*
 - *Export the result as a CSV file.*
 
-Read the SQL before you agree to run it. A query can be valid and still not answer your question; the dry run checks only the former.
+Read the SQL before you agree to run it. The dry run checks that the query is valid, not that it answers your question.
 
 ## Costs
 
@@ -179,17 +179,29 @@ When you ask for an export, the server writes the file to `/data/exports` inside
 
 ## Safeguards
 
-**Read-only SQL.** The server runs only single `SELECT` statements. Data-modifying SQL (`INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`, ...) and scripts with several statements are refused in two ways: the server checks the SQL itself, and the dry run must report BigQuery's own classification of the statement as `SELECT`. This holds whatever your Google login would allow. A personal gcloud login cannot be limited to read-only access, so the server does not rely on it; a service account gets the read-only scope.
+### Read-only SQL
 
-**Estimate before run.** A query can only run if the same SQL has had a dry run in the current session. Line breaks, spacing and comments may differ; any other difference counts as a new query and needs its own estimate. Whether to run it is your decision in the chat.
+The server runs only single `SELECT` statements. Data-modifying SQL (`INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`, ...) and scripts with several statements are refused in two ways: the server checks the SQL itself, and the dry run must report BigQuery's own classification of the statement as `SELECT`. This holds whatever your Google login would allow. A personal gcloud login cannot be limited to read-only access, so the server does not rely on it; a service account gets the read-only scope.
 
-**Cost limits.** The estimate refuses queries that would scan more than 500 GB (`MAX_GB_PER_QUERY`). Each run is sent to BigQuery with a cap taken from its estimate, so BigQuery stops a job without charge if it would bill more than you were shown. Jobs carry the label `tool: orion-mcp`, which you can filter on in the Google Cloud billing export.
+### Estimate before run
 
-**Result size.** Results with more than 1,000,000 rows are not downloaded (`MAX_DOWNLOAD_ROWS`). The query is still billed. Aggregate or filter it, or keep the result in BigQuery with `orion_query_to_table`.
+A query can only run if the same SQL has had a dry run in the current session. Line breaks, spacing and comments may differ; any other difference counts as a new query and needs its own estimate. Whether to run it is your decision in the chat.
 
-**Writing to BigQuery.** This is possible only through two tools in which the destination table is an explicit argument that you confirm in the chat, never through SQL. Both refuse to touch an existing table unless you ask to overwrite it, and both are limited by your own permissions in Google Cloud.
+### Cost limits
 
-**What the LLM provider sees.** Your questions, the table schemas, the SQL, a preview of each result (up to about 60,000 characters), and the output of the summary, count and slice tools. The full results stay in the container and in the files you export.
+The estimate refuses queries that would scan more than 500 GB (`MAX_GB_PER_QUERY`). Each run is sent to BigQuery with a cap taken from its estimate, so BigQuery stops a job without charge if it would bill more than you were shown. Jobs carry the label `tool: orion-mcp`, which you can filter on in the Google Cloud billing export.
+
+### Result size
+
+Results with more than 1,000,000 rows are not downloaded (`MAX_DOWNLOAD_ROWS`). The query is still billed. Aggregate or filter it, or keep the result in BigQuery with `orion_query_to_table`.
+
+### Writing to BigQuery
+
+Only two tools can write to BigQuery, never SQL. In both, the destination table is an explicit argument that you confirm in the chat. Both refuse to touch an existing table unless you ask to overwrite it, and both are limited by your own permissions in Google Cloud.
+
+### What the LLM provider sees
+
+Your questions, the table schemas, the SQL, a preview of each result (up to about 60,000 characters), and the output of the summary, count and slice tools. The full results stay in the container and in the files you export.
 
 ## Tools
 
@@ -222,7 +234,9 @@ All settings are optional, except the billing project for running queries. Add t
 | `SCHEMA_REPO`, `SCHEMA_PATH` | `orion-dbs-community/website`, `data` | GitHub repository and folder the schema files come from. |
 | `EXPORT_DIR` | `/data/exports` | Export folder inside the container. |
 
-**Schema files.** The image contains the schema files from the day it was built, and it is rebuilt daily. At start-up the server also downloads the current files. If that fails, it uses the ones in the image. With `SCHEMA_REFRESH=0` the server starts in about a second and works without a network connection for schema browsing.
+### Schema files
+
+The image contains the schema files from the day it was built, and it is rebuilt daily. At start-up the server also downloads the current files. If that fails, it uses the ones in the image. With `SCHEMA_REFRESH=0` the server starts in about a second and works without a network connection for schema browsing.
 
 ## Updating
 
@@ -259,7 +273,7 @@ Then quit and reopen Claude Desktop.
 
 - Ask for fewer columns or a filter, or raise `MAX_GB_PER_QUERY`.
 
-If Claude misunderstands your question, returns unexpected results or picks the wrong dataset, please open a GitHub issue that says what you asked and what happened. This helps improve the tool descriptions that guide the LLM.
+If Claude misunderstands your question, returns unexpected results or picks the wrong dataset, please open a GitHub issue that says what you asked and what happened. We use these reports to improve the tool descriptions that guide the LLM.
 
 ## Development
 

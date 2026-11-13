@@ -142,13 +142,12 @@ read_limit_env <- function(var, default) {
   value
 }
 
-# Approximate BigQuery on-demand rate. Google prices per TiB (2^40 bytes),
-# not per 10^12 bytes; using 10^12 overstated the cost by about 9 %.
+# Approximate BigQuery on-demand rate, per TiB (2^40 bytes, not 10^12).
 USD_PER_TIB <- 6.25
 
 estimate_cost_usd <- function(bytes) round(bytes / 2^40 * USD_PER_TIB, 4)
 
-# Refuse very large scans before the user is even asked to confirm them.
+# Refuse very large scans before the user is asked to confirm them.
 assert_query_size <- function(bytes, max_gb = read_limit_env("MAX_GB_PER_QUERY", "500")) {
   gb <- bytes / 1e9
   if (gb > max_gb) {
@@ -285,8 +284,8 @@ blank_sql_literals <- function(sql, keep_literals = FALSE, squish = FALSE) {
   if (squish) str_trim(res) else res
 }
 
-# BigQuery's own classification of the SQL is the final authority: the
-# local scanner can miss syntax it does not know, the dry run cannot.
+# BigQuery's own classification of the SQL decides: the local scanner can
+# miss syntax it does not know, the dry run cannot.
 assert_select_statement <- function(statement_type) {
   if (!identical(statement_type, "SELECT")) {
     label <- if (is.character(statement_type) && length(statement_type) == 1) {
@@ -1014,8 +1013,8 @@ orion_export_bq_query <- function(query, filename = NULL) {
 # Writes never happen through SQL (assert_read_only_sql blocks DML/DDL).
 # They are only possible through these tools, where the destination table
 # is an explicit argument the user has seen and confirmed. Whether a write
-# is permitted at all is governed by the user's IAM roles on the
-# destination project.
+# is allowed at all depends on the user's IAM roles on the destination
+# project.
 
 parse_bq_table <- function(destination) {
   parts <- str_split_1(destination, fixed("."))
