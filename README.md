@@ -165,7 +165,7 @@ BigQuery bills by the amount of data a query scans, not by the rows it returns. 
 
 The session in the blog post, five queries and an export, scanned about 46 GB, which is under $0.30.
 
-Naming only the columns you need keeps the scan small. For this reason the server refuses `SELECT *` (also `SELECT DISTINCT *` and `table.*`) at the estimate, before you are asked to confirm.
+Naming only the columns you need keeps the scan small. For this reason the server refuses `SELECT *` (also `SELECT DISTINCT *`, `SELECT a, *` and `table.*`) at the estimate, before you are asked to confirm. The check reads the SQL text. It does not catch a query that selects a whole row through its table alias (`SELECT t FROM table AS t`).
 
 After each run the server reports the amount BigQuery billed. A query repeated unchanged within 24 hours is served from BigQuery's cache at no cost. The use of your LLM is paid for separately, for example through a Claude subscription.
 
@@ -174,7 +174,7 @@ After each run the server reports the amount BigQuery billed. A query repeated u
 When you ask for an export, the server writes the file to `/data/exports` inside the container. The second `-v` line in the config connects that folder to `~/Downloads/orion-exports` on your computer, so the file appears there. Without this line, exported files are lost when the container stops. The export tool and the setup check both warn you if it is missing.
 
 - Flat results are written as `.csv`, nested results as `.json`.
-- Each export of a query result comes with a second file of the same name ending in `.sql`. It holds the SQL that produced the data and a header with the date the query ran, the rows returned and the GB billed. You can cite it in a methods section or run it again later.
+- Each export of a query result comes with a second file of the same name ending in `.sql`. It holds the SQL that produced the data and a header with the date the query ran, the rows returned, the GB the dry run estimated and the GB billed. A run that BigQuery served from its 24-hour cache bills 0 GB; the header says so. You can cite it in a methods section or run it again later.
 - Files always go directly into the export folder. A requested file name is reduced to its bare name, and an existing file is not overwritten; a number is appended instead (`results_1.csv` and `results_1.sql`).
 
 ## Safeguards

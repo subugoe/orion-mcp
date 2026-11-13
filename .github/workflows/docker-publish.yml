@@ -35,7 +35,7 @@ jobs:
           install2.r --error --skipinstalled \
             --repos https://p3m.dev/cran/__linux__/noble/2026-11-10 \
             testthat dplyr purrr stringr readr tibble glue jsonlite \
-            gargle bigrquery
+            gargle bigrquery ellmer mcptools
 
       - name: Run unit tests
         run: Rscript tests/test-functions.R

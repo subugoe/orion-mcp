@@ -356,14 +356,24 @@ assert_read_only_sql <- function(sql) {
 
 # Expects SQL with literals and comments blanked (the output of
 # assert_read_only_sql), so '.*' inside a regex literal does not count.
-# Covers SELECT [ALL|DISTINCT] [AS STRUCT|AS VALUE] * and table.*;
-# COUNT(*) is not a column wildcard and stays allowed.
+# Names in backticks are replaced first, so a wildcard table such as
+# `p.d.events_*` is not taken for a column wildcard. Covers
+# SELECT [ALL|DISTINCT] [AS STRUCT|AS VALUE] *, a star as a later item
+# (a, *) and table.* (also `t`.* and t . *). A star after a comma cannot
+# be a multiplication, and COUNT(*) has a bracket before the star, so
+# arithmetic and counts stay allowed. SELECT t FROM table AS t (the whole
+# row as a struct) cannot be told from a column by the text and passes.
 assert_no_select_star <- function(sql_no_strings) {
+  sql <- str_replace_all(sql_no_strings, "`[^`]*`", "x")
   pattern <- regex(
-    "SELECT\\s+(ALL\\s+|DISTINCT\\s+)?(AS\\s+(STRUCT|VALUE)\\s+)?\\*|\\w+\\.\\*",
+    str_flatten(c(
+      "SELECT\\s+(ALL\\s+|DISTINCT\\s+)?(AS\\s+(STRUCT|VALUE)\\s+)?\\*",
+      ",\\s*\\*",
+      "\\.\\s*\\*"
+    ), "|"),
     ignore_case = TRUE
   )
-  if (str_detect(sql_no_strings, pattern)) {
+  if (str_detect(sql, pattern)) {
     stop(glue(
       "SELECT * and table.* are not allowed — specify only the columns ",
       "needed to avoid scanning unnecessary data."
@@ -444,6 +454,9 @@ validate_query <- function(sql) {
 
   list(
     billing = billing,
+    # For the .sql file next to an export, so a run served from BigQuery's
+    # cache still says how large the query is.
+    estimate_bytes = dry_run_cache[[key]],
     max_bytes = max_bytes_billed(
       dry_run_cache[[key]],
       if (key %in% names(dry_run_tables)) dry_run_tables[[key]] else 1L
@@ -511,6 +524,7 @@ execute_bq_query <- function(sql) {
   list(
     result = result,
     cache_hit = isTRUE(query_stats$cacheHit),
+    estimate_bytes = gate$estimate_bytes,
     billing_note = billing_note,
     run_at = run_at,
     gb_billed = job_gb_billed(query_stats)
@@ -520,7 +534,8 @@ execute_bq_query <- function(sql) {
 # Store a query result together with the SQL and run details.
 store_run <- function(run, query) {
   store_result(run$result, sql = query, run_at = run$run_at,
-               gb_billed = run$gb_billed)
+               gb_billed = run$gb_billed, estimate_bytes = run$estimate_bytes,
+               cache_hit = run$cache_hit)
 }
 
 # ---- Stored results ---------------------------------------------------------
@@ -534,9 +549,10 @@ result_counter <- 0L
 # Results stay in memory until the server stops, so only the most recent
 # ones are kept. Read at store time, after the query has been paid for, so
 # a bad value falls back to the default instead of losing the result.
+# At least 1, so that the number in messages is the number kept.
 stored_results_limit <- function() {
   tryCatch(
-    floor(read_limit_env("MAX_STORED_RESULTS", "20")),
+    max(1, floor(read_limit_env("MAX_STORED_RESULTS", "20"))),
     error = function(e) {
       message(glue("{conditionMessage(e)} Keeping the default of 20 results."))
       20
@@ -559,17 +575,21 @@ stored_result_names <- function() {
 results_meta <- new.env(parent = emptyenv())
 
 store_result <- function(df, sql = NULL, run_at = Sys.time(), gb_billed = NULL,
+                         estimate_bytes = NULL, cache_hit = FALSE,
                          max_results = stored_results_limit()) {
   result_counter <<- result_counter + 1L
   name <- as.character(glue("q{result_counter}"))
   assign(name, df, envir = results_env)
   if (!is.null(sql)) {
-    assign(name, list(sql = sql, run_at = run_at, gb_billed = gb_billed),
-           envir = results_meta)
+    meta <- list(
+      sql = sql, run_at = run_at, gb_billed = gb_billed,
+      estimate_bytes = estimate_bytes, cache_hit = isTRUE(cache_hit)
+    )
+    assign(name, meta, envir = results_meta)
   }
 
   stored <- stored_result_names()
-  old <- stored[map_int(stored, result_number) <= result_counter - max(1, max_results)]
+  old <- stored[map_int(stored, result_number) <= result_counter - max_results]
   rm(list = old, envir = results_env)
   rm(list = intersect(old, ls(results_meta)), envir = results_meta)
   name
@@ -586,8 +606,11 @@ get_result <- function(name) {
     } else {
       "No query results are stored in this session yet — run a query first."
     }
+    # Dropped only if the server once gave this exact name: not q0 or q007.
     number <- result_number(name)
-    if (!is.na(number) && number <= result_counter) {
+    was_stored <- !is.na(number) && number >= 1 && number <= result_counter &&
+      identical(name, paste0("q", number))
+    if (was_stored) {
       stop(glue(
         "Result '{name}' is no longer stored: the server keeps only the ",
         "{stored_results_limit()} most recent results (MAX_STORED_RESULTS) ",
@@ -618,11 +641,19 @@ render_rows <- function(df, budget = MAX_RESULT_CHARS) {
   df <- head(df, min(total_rows, max_rows))
 
   if (nested) {
+    # Real JSON lines are far longer than three characters, so serialise
+    # 500 rows at a time and stop once the budget is used up.
     header <- NULL
-    body <- map_chr(
-      seq_len(nrow(df)),
-      \(i) toJSON(as.list(df[i, ]), auto_unbox = TRUE)
-    )
+    body <- character()
+    used <- 0L
+    starts <- seq(1L, by = 500L, length.out = ceiling(nrow(df) / 500))
+    for (start in starts) {
+      rows <- start:min(start + 499L, nrow(df))
+      chunk <- map_chr(rows, \(i) toJSON(as.list(df[i, ]), auto_unbox = TRUE))
+      body <- c(body, chunk)
+      used <- used + sum(nchar(chunk) + 1L)
+      if (used > budget) break
+    }
   } else {
     flat <- df |>
       mutate(across(where(is.character), \(x) str_replace_all(x, "[\r\n]+", " ")))
@@ -655,15 +686,16 @@ orion_run_bq_query <- function(query) {
     glue(
       "Showing only the first {rendered$rows_shown} of {nrow(result)} rows — ",
       "the full output exceeds the response budget. The COMPLETE result is ",
-      "stored in the R session as '{name}'. Do NOT draw conclusions from ",
-      "the truncated rows alone: use orion_result_summary, ",
+      "stored in the orion-mcp server as '{name}'. Do NOT draw conclusions ",
+      "from the truncated rows alone: use orion_result_summary, ",
       "orion_result_count, or orion_result_slice on '{name}' to analyse ",
       "the full data, or orion_export_result to save it to a file (free — ",
-      "the data is already in the R session)."
+      "the data is already stored in the orion-mcp server)."
     )
   } else {
     glue(
-      "Complete result shown below; also stored in the R session as '{name}'."
+      "Complete result shown below; also stored in the orion-mcp server ",
+      "as '{name}'."
     )
   }
 
@@ -676,9 +708,11 @@ orion_run_bq_query <- function(query) {
     "(1) summarise the key findings in plain language; ",
     "(2) explain in one or two jargon-free sentences how the query worked — ",
     "which tables it read and what the filters, joins, or aggregations did; ",
-    "(3) mention that the full data is held in the local R session as ",
-    "'{name}' (it was not uploaded anywhere) and can be analysed further ",
-    "or exported to a file on request. ",
+    "(3) mention that the full result is stored in the orion-mcp server ",
+    "as '{name}' (only a preview was sent to you) and can be analysed ",
+    "further or exported to a file on request. The user cannot open ",
+    "'{name}' in their own R session; to work with it in R or another ",
+    "tool, export it first. ",
     "Present results as plain text and simple markdown tables in the ",
     "chat — do NOT create charts, artifacts, or interactive ",
     "visualisations unless the user explicitly asks for one.\n",
@@ -869,13 +903,19 @@ export_mount_note <- function() {
 # appended instead (results.csv, results_1.csv, ...). `also` lists the
 # extensions of companion files (the .sql sidecar) that must be free too,
 # so the data file and its sidecar always share a name.
+# A data extension the model may add to the name; any other dot is part of
+# the name the user asked for (top10.2024, results.v2).
+data_extension <- regex("\\.(csv|json|sql|tsv|txt)$", ignore_case = TRUE)
+
 export_path <- function(filename, ext, dir = EXPORT_DIR, also = character()) {
   stem <- if (is.null(filename)) "" else {
     filename |>
       basename() |>
-      tools::file_path_sans_ext()
+      str_remove(data_extension) |>
+      str_trim() |>
+      str_remove("^\\.+")  # no hidden files, and ".." is not a name
   }
-  if (stem %in% c("", ".", "..")) {
+  if (stem == "") {
     stem <- glue("orion_export_{format(Sys.time(), '%Y%m%d_%H%M%S')}")
   }
 
@@ -896,10 +936,19 @@ export_path <- function(filename, ext, dir = EXPORT_DIR, also = character()) {
 sql_sidecar_text <- function(meta, n_rows, data_file) {
   run_at <- format(meta$run_at, "%Y-%m-%d %H:%M:%S UTC", tz = "UTC")
   gb <- if (is.null(meta$gb_billed)) "unknown" else format(meta$gb_billed, scientific = FALSE)
+  if (isTRUE(meta$cache_hit)) {
+    gb <- glue("{gb} (served from BigQuery's 24-hour query cache)")
+  }
+  estimate <- meta$estimate_bytes
+  estimate_line <- if (is.numeric(estimate) && length(estimate) == 1 && !is.na(estimate)) {
+    estimate_gb <- format(round(estimate / 1e9, 3), scientific = FALSE)
+    glue("-- GB scanned (dry-run estimate): {estimate_gb}")
+  }
   c(
     "-- Query run on Google BigQuery through orion-mcp.",
     glue("-- Run at: {run_at}"),
     glue("-- Rows returned: {n_rows}"),
+    estimate_line,
     glue("-- GB billed: {gb}"),
     glue("-- Data file: {data_file}"),
     "",
@@ -996,8 +1045,8 @@ orion_export_bq_query <- function(query, filename = NULL) {
       "{export_rename_note(export, filename)}",
       "{export_sql_note(export)}",
       "{export_mount_note()} ",
-      "The result is also stored in the R session as '{name}' for the ",
-      "analysis tools. ",
+      "The result is also stored in the orion-mcp server as '{name}' for ",
+      "the analysis tools. ",
       "SQL:\n{str_trim(query)}\n",
       "When presenting this to the user, say in plain language what was ",
       "exported, where the files appear on their machine, and briefly ",
@@ -1130,7 +1179,8 @@ patch_mcptools_list_methods <- function(handler = "handle_message_from_client") 
       stopifnot(is.function(orig), is.function(cat_json))
       assignInNamespace(
         handler,
-        function(line) {
+        # `...` passes on any argument a later mcptools adds to the handler.
+        function(line, ...) {
           msg <- tryCatch(jsonlite::parse_json(line), error = function(e) NULL)
           result <- if (is.list(msg) && is.character(msg$method)) {
             switch(msg$method,
@@ -1143,7 +1193,7 @@ patch_mcptools_list_methods <- function(handler = "handle_message_from_client") 
             cat_json(list(jsonrpc = "2.0", id = msg$id, result = result))
             return(invisible(NULL))
           }
-          orig(line)
+          orig(line, ...)
         },
         ns = "mcptools"
       )

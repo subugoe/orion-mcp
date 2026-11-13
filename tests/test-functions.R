@@ -228,6 +228,8 @@ test_that("only the most recent results are kept", {
   # A name that never existed gets the plain message
   expect_error(get_result("q99999"), "No stored result named 'q99999'")
   expect_error(get_result("results"), "No stored result named 'results'")
+  expect_error(get_result("q0"), "No stored result named 'q0'")
+  expect_error(get_result("q007"), "No stored result named 'q007'")
 })
 
 test_that("MAX_STORED_RESULTS is read from the environment, with a safe fallback", {
@@ -240,6 +242,10 @@ test_that("MAX_STORED_RESULTS is read from the environment, with a safe fallback
   })
   withr::with_envvar(c(MAX_STORED_RESULTS = NA), {
     expect_equal(stored_results_limit(), 20)
+  })
+  # The server keeps at least one result, and says so
+  withr::with_envvar(c(MAX_STORED_RESULTS = "0.5"), {
+    expect_equal(stored_results_limit(), 1)
   })
   withr::with_envvar(c(MAX_STORED_RESULTS = "many"), {
     expect_message(limit <- stored_results_limit(), "Keeping the default of 20")
@@ -300,6 +306,17 @@ test_that("render_rows serialises only rows that can fit the budget", {
   expect_true(rendered$truncated)
   expect_gt(rendered$rows_shown, 0)
   expect_lte(nchar(rendered$text), 300)
+
+  # Nested rows are serialised in chunks: at a budget that fits fewer than
+  # 500 rows, row 600 is never reached (budget %/% 3 alone would allow it)
+  late <- tibble(
+    id = 1:1000,
+    x = c(as.list(1:599), list(new.env()), as.list(601:1000))
+  )
+  rendered <- render_rows(late, budget = 3000)
+  expect_true(rendered$truncated)
+  expect_lt(rendered$rows_shown, 500)
+  expect_lte(nchar(rendered$text), 3000)
 
   # truncated is judged against the full row count, not the serialised part
   flat <- tibble(a = rep("x", 100))
@@ -412,6 +429,16 @@ test_that("export filenames get the extension of the format written", {
   expect_equal(basename(export_path("results", "csv", dir)), "results.csv")
   expect_equal(basename(export_path("results.CSV", "json", dir)), "results.json")
 
+  # Only a data extension goes; other dots are part of the name
+  name_for <- \(filename, ext = "csv") basename(export_path(filename, ext, dir))
+  expect_equal(name_for("top10.2024"), "top10.2024.csv")
+  expect_equal(name_for("results.v2.csv"), "results.v2.csv")
+  expect_equal(name_for("results.tar.gz"), "results.tar.gz.csv")
+  expect_equal(name_for("results.JSON"), "results.csv")
+  expect_equal(name_for(".hidden"), "hidden.csv")
+  for (blank in c(".csv", "  ", "", "."))
+    expect_match(name_for(blank), "^orion_export_\\d{8}_\\d{6}\\.csv$", label = blank)
+
   nested <- store_result(tibble(doi = "10.1/a", authors = list(list("A"))))
   out <- fromJSON(orion_export_result(nested, "nested.csv"), simplifyVector = FALSE)
   expect_equal(basename(out$path), "nested.json")
@@ -475,6 +502,12 @@ test_that("exports of query results carry a .sql file with the query", {
   expect_equal(basename(out_nested$sql_path), "nested_q.sql")
   expect_match(read_file(out_nested$sql_path), "-- GB billed: 0\n", fixed = TRUE)
 
+  # A dot in the name stays in both files
+  dotted <- fromJSON(orion_export_result(name, "a.b"), simplifyVector = FALSE)
+  expect_equal(basename(dotted$path), "a.b.csv")
+  expect_equal(basename(dotted$sql_path), "a.b.sql")
+  expect_match(read_file(dotted$sql_path), "-- Data file: a.b.csv", fixed = TRUE)
+
   # Results stored without a query get no .sql file
   plain <- fromJSON(orion_export_result(store_result(tibble(x = 1)), "plain.csv"),
                     simplifyVector = FALSE)
@@ -482,12 +515,39 @@ test_that("exports of query results carry a .sql file with the query", {
   expect_false(file.exists(file.path(EXPORT_DIR, "plain.sql")))
 })
 
+test_that("the .sql header gives the estimate and marks a cache hit", {
+  meta <- list(sql = "SELECT 1", run_at = as.POSIXct("2026-11-13", tz = "UTC"),
+               gb_billed = 0, estimate_bytes = 12.3e9, cache_hit = TRUE)
+  cached <- sql_sidecar_text(meta, 5, "a.csv")
+  expect_true("-- GB scanned (dry-run estimate): 12.3" %in% cached)
+  expect_true(
+    "-- GB billed: 0 (served from BigQuery's 24-hour query cache)" %in% cached
+  )
+  # The estimate comes before what was billed
+  expect_lt(which(str_detect(cached, "estimate")), which(str_detect(cached, "billed")))
+
+  billed <- sql_sidecar_text(modifyList(meta, list(gb_billed = 12.4, cache_hit = FALSE)),
+                             5, "a.csv")
+  expect_true("-- GB billed: 12.4" %in% billed)
+  expect_true("-- GB scanned (dry-run estimate): 12.3" %in% billed)
+
+  no_estimate <- sql_sidecar_text(list(sql = "SELECT 1", run_at = meta$run_at,
+                                       gb_billed = 1), 5, "a.csv")
+  expect_false(any(str_detect(no_estimate, "estimate")))
+  expect_true("-- GB billed: 1" %in% no_estimate)
+})
+
 test_that("stored results keep their SQL and run details until dropped", {
   run_at <- Sys.time()
   first <- store_result(tibble(x = 1), sql = "SELECT 1 AS x", run_at = run_at,
                         gb_billed = 0.5, max_results = 2)
   expect_equal(get_result_meta(first),
-               list(sql = "SELECT 1 AS x", run_at = run_at, gb_billed = 0.5))
+               list(sql = "SELECT 1 AS x", run_at = run_at, gb_billed = 0.5,
+                    estimate_bytes = NULL, cache_hit = FALSE))
+  cached <- store_result(tibble(x = 1), sql = "SELECT 1 AS x", gb_billed = 0,
+                         estimate_bytes = 12.3e9, cache_hit = TRUE)
+  expect_equal(get_result_meta(cached)$estimate_bytes, 12.3e9)
+  expect_true(get_result_meta(cached)$cache_hit)
   store_result(tibble(x = 2), sql = "SELECT 2 AS x", max_results = 2)
   store_result(tibble(x = 3), sql = "SELECT 3 AS x", max_results = 2)
   expect_null(get_result_meta(first))
@@ -509,7 +569,16 @@ test_that("SELECT * guard blocks wildcards but not regex literals or COUNT(*)", 
     "SELECT AS STRUCT * FROM t",
     "SELECT AS VALUE * FROM t",
     "select distinct as struct * from t",
-    "WITH x AS (SELECT * FROM t) SELECT a FROM x"
+    "WITH x AS (SELECT * FROM t) SELECT a FROM x",
+    "SELECT doi, * FROM t",
+    "SELECT doi,\n  *\nFROM t",
+    "SELECT `t`.* FROM `p.d.t` AS t",
+    "SELECT t . * FROM t",
+    "SELECT t.\n* FROM t",
+    "SELECT * EXCEPT (a) FROM t",
+    "SELECT STRUCT(t.*) FROM t",
+    "SELECT a /* c */ , /* d */ * FROM t",
+    "SELECT 1 AS a, * FROM UNNEST([1, 2]) AS x"
   )
   for (sql in blocked) {
     expect_error(guard(sql), "SELECT \\* and table.\\* are not allowed", label = sql)
@@ -520,7 +589,16 @@ test_that("SELECT * guard blocks wildcards but not regex literals or COUNT(*)", 
     "SELECT COUNT(*) FROM t",
     "SELECT DISTINCT COUNT(*) AS n FROM t",
     "SELECT year, COUNT(*) AS n FROM t GROUP BY year",
-    "SELECT doi FROM t -- not SELECT * here"
+    "SELECT doi FROM t -- not SELECT * here",
+    "SELECT COUNT( * ) FROM t",
+    "SELECT a FROM `p.d.events_*`",
+    "SELECT a FROM `p.d.*`",
+    "SELECT value * 2 AS v, a * b AS c FROM t",
+    "SELECT t.a * t.b FROM t",
+    "SELECT a, 2 * b FROM t",
+    "SELECT a, (b) * c FROM t",
+    "SELECT 1.5 * x FROM t",
+    "SELECT x FROM t WHERE note = ', *'"
   )
   for (sql in allowed) {
     expect_no_error(guard(sql))
@@ -532,8 +610,16 @@ test_that("cost estimate refuses SELECT * before contacting BigQuery", {
     # Fails before bq_dry_run_stats(), so no request is made
     expect_error(orion_estimate_query_cost("SELECT DISTINCT * FROM `p.d.t`"),
                  "SELECT \\* and table.\\* are not allowed")
+    # A star as a later item, the form a model tries after a plain SELECT *
+    expect_error(
+      orion_estimate_query_cost("SELECT 1 AS a, * FROM UNNEST([1, 2]) AS x"),
+      "SELECT \\* and table.\\* are not allowed"
+    )
   })
   expect_false("SELECT DISTINCT * FROM `p.d.t`" %in% names(dry_run_cache))
+  expect_false(
+    "SELECT 1 AS a, * FROM UNNEST([1, 2]) AS x" %in% names(dry_run_cache)
+  )
 })
 
 test_that("normalize_sql collapses whitespace outside literals", {
@@ -756,10 +842,54 @@ test_that("large results are not downloaded", {
   })
 })
 
+test_that("run and export messages say the result is stored in the server", {
+  # Stand-in for the BigQuery round-trip, restored afterwards
+  real_execute <- execute_bq_query
+  assign("execute_bq_query", function(sql) {
+    list(
+      result = tibble(year = 2024:2025, n = c(3L, 5L)),
+      cache_hit = FALSE,
+      estimate_bytes = 1e7,
+      billing_note = "BigQuery billed 0.01 GB for this run.",
+      run_at = Sys.time(),
+      gb_billed = 0.01
+    )
+  }, envir = globalenv())
+  withr::defer(assign("execute_bq_query", real_execute, envir = globalenv()))
+
+  real_dir <- EXPORT_DIR
+  assign("EXPORT_DIR", withr::local_tempdir(), envir = globalenv())
+  withr::defer(assign("EXPORT_DIR", real_dir, envir = globalenv()))
+
+  sql <- "SELECT year, COUNT(*) AS n FROM `p.d.t` GROUP BY year"
+  run_text <- orion_run_bq_query(sql)
+  expect_match(run_text, "orion-mcp server", fixed = TRUE)
+  expect_no_match(run_text, "in the R session", fixed = TRUE)
+  expect_no_match(run_text, "local R session", fixed = TRUE)
+  # The user is told to export before working with the data elsewhere
+  expect_match(run_text, "cannot open '.+' in their own R session")
+  expect_match(run_text, "export it first", fixed = TRUE)
+
+  out <- fromJSON(orion_export_bq_query(sql, "stored_note.csv"),
+                  simplifyVector = FALSE)
+  expect_true(file.exists(out$path))
+  expect_match(read_file(out$sql_path), "-- GB scanned (dry-run estimate): 0.01",
+               fixed = TRUE)
+  expect_match(out$message, "orion-mcp server", fixed = TRUE)
+  expect_no_match(out$message, "R session", fixed = TRUE)
+})
+
 # ---- server.R over stdio (no credentials, no schemas, no network) ----------
 
 has_server_pkgs <- requireNamespace("ellmer", quietly = TRUE) &&
   requireNamespace("mcptools", quietly = TRUE)
+
+# Locally the tests below skip without the packages; in CI that would hide
+# the only checks of the tool annotations and the mcptools patch.
+test_that("CI has the packages to start the server", {
+  skip_if_not(identical(Sys.getenv("CI"), "true"), "only checked in CI")
+  expect_true(has_server_pkgs)
+})
 
 # Starts server.R, sends JSON-RPC lines on stdin and returns the parsed
 # replies. GOOGLE_APPLICATION_CREDENTIALS points at a missing file, so gargle
@@ -802,6 +932,10 @@ test_that("tools/list carries titles and read-only/destructive hints", {
   ann <- set_names(map(tools, "annotations"), map_chr(tools, "name"))
 
   expect_true(all(map_lgl(ann, \(a) is.character(a$title) && nzchar(a$title))))
+
+  # Results live in the server process; the user cannot reach them from
+  # their own R session, so no description may suggest that
+  for (t in tools) expect_no_match(t$description, "R session", fixed = TRUE)
 
   read_only <- c(
     "orion_health_check", "orion_list_datasets", "orion_list_tables",

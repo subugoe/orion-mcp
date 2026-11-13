@@ -171,16 +171,17 @@ mcp_server(
         "confirmation step, even for small queries. Takes exactly one ",
         "argument — query — which must be the complete, fully-qualified ",
         "SQL string. ",
-        "Every result is stored in the R session under a stable name ",
-        "(q1, q2, ...) and only a size-capped preview is returned inline. ",
+        "Every result is stored in the orion-mcp server under a stable ",
+        "name (q1, q2, ...) and only a size-capped preview is returned ",
+        "inline. ",
         "The most recent 20 results are kept (MAX_STORED_RESULTS); older ",
         "ones are dropped. ",
         "If the response says the preview was TRUNCATED, do not reason ",
         "from the partial rows — use orion_result_summary, ",
         "orion_result_count, or orion_result_slice on the stored result, ",
         "or orion_export_result to save it to a file. All of these are ",
-        "free: they use the data already in the R session and never ",
-        "re-query BigQuery. ",
+        "free: they use the result already stored in the orion-mcp ",
+        "server and never re-query BigQuery. ",
         "Results above MAX_DOWNLOAD_ROWS (default 1,000,000 rows) are not ",
         "downloaded; the query is still billed. For results that large, ",
         "aggregate or filter in SQL, or use orion_query_to_table. ",
@@ -219,10 +220,10 @@ mcp_server(
       glue(
         "ANALYSIS TOOL (after STEP 5): Per-column summary of a stored ",
         "query result (type, missing values, distinct count, min/mean/max ",
-        "or example values). Operates on the FULL result held in the R ",
-        "session, not the truncated preview. Use this first when a query ",
-        "result was truncated, to understand the data before slicing or ",
-        "counting. Costs nothing — no BigQuery access involved."
+        "or example values). Operates on the FULL result stored in the ",
+        "orion-mcp server, not the truncated preview. Use this first when ",
+        "a query result was truncated, to understand the data before ",
+        "slicing or counting. Costs nothing — no BigQuery access involved."
       ),
       arguments = list(
         name = type_string(glue(
@@ -240,10 +241,10 @@ mcp_server(
       glue(
         "ANALYSIS TOOL (after STEP 5): Frequency counts over one or more ",
         "columns of a stored query result, sorted by count (top 100 ",
-        "groups). Operates on the FULL result held in the R session, not ",
-        "the truncated preview. Use for questions like 'how does this ",
-        "break down by year / institution / type?' without re-querying ",
-        "BigQuery. Costs nothing — no BigQuery access involved."
+        "groups). Operates on the FULL result stored in the orion-mcp ",
+        "server, not the truncated preview. Use for questions like 'how ",
+        "does this break down by year / institution / type?' without ",
+        "re-querying BigQuery. Costs nothing — no BigQuery access involved."
       ),
       arguments = list(
         name = type_string("Name of the stored result (e.g. 'q1')"),
@@ -262,8 +263,8 @@ mcp_server(
       glue(
         "ANALYSIS TOOL (after STEP 5): Return selected rows and columns ",
         "from a stored query result, with an optional single filter. ",
-        "Operates on the FULL result held in the R session, not the ",
-        "truncated preview. Use to inspect specific subsets of a large ",
+        "Operates on the FULL result stored in the orion-mcp server, not ",
+        "the truncated preview. Use to inspect specific subsets of a large ",
         "result (e.g. one institution, one year) without re-querying ",
         "BigQuery. Costs nothing."
       ),
@@ -309,12 +310,14 @@ mcp_server(
       glue(
         "EXPORT (preferred): Write a stored query result (q1, q2, ...) to ",
         "a file. This is completely free and instant — the data is already ",
-        "in the R session, so BigQuery is never contacted. ALWAYS use this ",
-        "instead of orion_export_bq_query when the user wants to save a ",
-        "result that has already been run with orion_run_bq_query. Flat ",
+        "stored in the orion-mcp server, so BigQuery is never contacted. ",
+        "ALWAYS use this instead of orion_export_bq_query when the user ",
+        "wants to save a result that has already been run with ",
+        "orion_run_bq_query. Flat ",
         "results are exported as CSV; nested results as JSON. A .sql file ",
         "with the same name is written next to it, holding the SQL and a ",
-        "header with the run date, rows returned and GB billed. The response ",
+        "header with the run date, rows returned, the dry-run estimate and ",
+        "GB billed. The response ",
         "says whether the export folder is mounted to the host; if it is ",
         "not, relay the warning to the user so they can add the volume ",
         "mount before the file is lost when the container stops."
@@ -375,7 +378,8 @@ mcp_server(
         "WRITE TOOL / ALTERNATIVE TO STEP 5: Execute a SELECT query and ",
         "write the results DIRECTLY to a destination BigQuery table, ",
         "without downloading anything. Use for large derived tables that ",
-        "should live in BigQuery rather than pass through the R session. ",
+        "should live in BigQuery rather than pass through the orion-mcp ",
+        "server. ",
         "Only the query scan is billed; the write itself is free. ",
         "PREREQUISITES: orion_estimate_query_cost MUST have been called ",
         "for this exact SQL, the user must have confirmed the cost, AND ",
@@ -416,7 +420,7 @@ mcp_server(
         "not contact BigQuery. Flat results are exported as CSV; nested ",
         "results as JSON. A .sql file with the same name is written next ",
         "to it, holding the SQL and a header with the run date, rows ",
-        "returned and GB billed. ",
+        "returned, the dry-run estimate and GB billed. ",
         "PREREQUISITE: orion_estimate_query_cost MUST have been called for ",
         "this exact SQL AND the user must have explicitly confirmed they ",
         "want to proceed. Results above MAX_DOWNLOAD_ROWS (default ",
