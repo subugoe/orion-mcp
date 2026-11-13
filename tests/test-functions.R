@@ -821,6 +821,13 @@ test_that("run and export messages say the result is stored in the server", {
 has_server_pkgs <- requireNamespace("ellmer", quietly = TRUE) &&
   requireNamespace("mcptools", quietly = TRUE)
 
+# Locally the tests below skip without the packages; in CI that would hide
+# the only checks of the tool annotations and the mcptools patch.
+test_that("CI has the packages to start the server", {
+  skip_if_not(identical(Sys.getenv("CI"), "true"), "only checked in CI")
+  expect_true(has_server_pkgs)
+})
+
 # Starts server.R, sends JSON-RPC lines on stdin and returns the parsed
 # replies. GOOGLE_APPLICATION_CREDENTIALS points at a missing file, so gargle
 # finds no credentials and makes no request; SCHEMA_DIR is an empty folder.

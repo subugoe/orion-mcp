@@ -1143,7 +1143,8 @@ patch_mcptools_list_methods <- function(handler = "handle_message_from_client") 
       stopifnot(is.function(orig), is.function(cat_json))
       assignInNamespace(
         handler,
-        function(line) {
+        # `...` passes on any argument a later mcptools adds to the handler.
+        function(line, ...) {
           msg <- tryCatch(jsonlite::parse_json(line), error = function(e) NULL)
           result <- if (is.list(msg) && is.character(msg$method)) {
             switch(msg$method,
@@ -1156,7 +1157,7 @@ patch_mcptools_list_methods <- function(handler = "handle_message_from_client") 
             cat_json(list(jsonrpc = "2.0", id = msg$id, result = result))
             return(invisible(NULL))
           }
-          orig(line)
+          orig(line, ...)
         },
         ns = "mcptools"
       )
