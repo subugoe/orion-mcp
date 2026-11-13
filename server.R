@@ -316,7 +316,8 @@ mcp_server(
         "orion_run_bq_query. Flat ",
         "results are exported as CSV; nested results as JSON. A .sql file ",
         "with the same name is written next to it, holding the SQL and a ",
-        "header with the run date, rows returned and GB billed. The response ",
+        "header with the run date, rows returned, the dry-run estimate and ",
+        "GB billed. The response ",
         "says whether the export folder is mounted to the host; if it is ",
         "not, relay the warning to the user so they can add the volume ",
         "mount before the file is lost when the container stops."
@@ -419,7 +420,7 @@ mcp_server(
         "not contact BigQuery. Flat results are exported as CSV; nested ",
         "results as JSON. A .sql file with the same name is written next ",
         "to it, holding the SQL and a header with the run date, rows ",
-        "returned and GB billed. ",
+        "returned, the dry-run estimate and GB billed. ",
         "PREREQUISITE: orion_estimate_query_cost MUST have been called for ",
         "this exact SQL AND the user must have explicitly confirmed they ",
         "want to proceed. Results above MAX_DOWNLOAD_ROWS (default ",

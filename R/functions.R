@@ -454,6 +454,9 @@ validate_query <- function(sql) {
 
   list(
     billing = billing,
+    # For the .sql file next to an export, so a run served from BigQuery's
+    # cache still says how large the query is.
+    estimate_bytes = dry_run_cache[[key]],
     max_bytes = max_bytes_billed(
       dry_run_cache[[key]],
       if (key %in% names(dry_run_tables)) dry_run_tables[[key]] else 1L
@@ -521,6 +524,7 @@ execute_bq_query <- function(sql) {
   list(
     result = result,
     cache_hit = isTRUE(query_stats$cacheHit),
+    estimate_bytes = gate$estimate_bytes,
     billing_note = billing_note,
     run_at = run_at,
     gb_billed = job_gb_billed(query_stats)
@@ -530,7 +534,8 @@ execute_bq_query <- function(sql) {
 # Store a query result together with the SQL and run details.
 store_run <- function(run, query) {
   store_result(run$result, sql = query, run_at = run$run_at,
-               gb_billed = run$gb_billed)
+               gb_billed = run$gb_billed, estimate_bytes = run$estimate_bytes,
+               cache_hit = run$cache_hit)
 }
 
 # ---- Stored results ---------------------------------------------------------
@@ -569,13 +574,17 @@ stored_result_names <- function() {
 results_meta <- new.env(parent = emptyenv())
 
 store_result <- function(df, sql = NULL, run_at = Sys.time(), gb_billed = NULL,
+                         estimate_bytes = NULL, cache_hit = FALSE,
                          max_results = stored_results_limit()) {
   result_counter <<- result_counter + 1L
   name <- as.character(glue("q{result_counter}"))
   assign(name, df, envir = results_env)
   if (!is.null(sql)) {
-    assign(name, list(sql = sql, run_at = run_at, gb_billed = gb_billed),
-           envir = results_meta)
+    meta <- list(
+      sql = sql, run_at = run_at, gb_billed = gb_billed,
+      estimate_bytes = estimate_bytes, cache_hit = isTRUE(cache_hit)
+    )
+    assign(name, meta, envir = results_meta)
   }
 
   stored <- stored_result_names()
@@ -923,10 +932,19 @@ export_path <- function(filename, ext, dir = EXPORT_DIR, also = character()) {
 sql_sidecar_text <- function(meta, n_rows, data_file) {
   run_at <- format(meta$run_at, "%Y-%m-%d %H:%M:%S UTC", tz = "UTC")
   gb <- if (is.null(meta$gb_billed)) "unknown" else format(meta$gb_billed, scientific = FALSE)
+  if (isTRUE(meta$cache_hit)) {
+    gb <- glue("{gb} (served from BigQuery's 24-hour query cache)")
+  }
+  estimate <- meta$estimate_bytes
+  estimate_line <- if (is.numeric(estimate) && length(estimate) == 1 && !is.na(estimate)) {
+    estimate_gb <- format(round(estimate / 1e9, 3), scientific = FALSE)
+    glue("-- GB scanned (dry-run estimate): {estimate_gb}")
+  }
   c(
     "-- Query run on Google BigQuery through orion-mcp.",
     glue("-- Run at: {run_at}"),
     glue("-- Rows returned: {n_rows}"),
+    estimate_line,
     glue("-- GB billed: {gb}"),
     glue("-- Data file: {data_file}"),
     "",

@@ -509,12 +509,39 @@ test_that("exports of query results carry a .sql file with the query", {
   expect_false(file.exists(file.path(EXPORT_DIR, "plain.sql")))
 })
 
+test_that("the .sql header gives the estimate and marks a cache hit", {
+  meta <- list(sql = "SELECT 1", run_at = as.POSIXct("2026-11-13", tz = "UTC"),
+               gb_billed = 0, estimate_bytes = 12.3e9, cache_hit = TRUE)
+  cached <- sql_sidecar_text(meta, 5, "a.csv")
+  expect_true("-- GB scanned (dry-run estimate): 12.3" %in% cached)
+  expect_true(
+    "-- GB billed: 0 (served from BigQuery's 24-hour query cache)" %in% cached
+  )
+  # The estimate comes before what was billed
+  expect_lt(which(str_detect(cached, "estimate")), which(str_detect(cached, "billed")))
+
+  billed <- sql_sidecar_text(modifyList(meta, list(gb_billed = 12.4, cache_hit = FALSE)),
+                             5, "a.csv")
+  expect_true("-- GB billed: 12.4" %in% billed)
+  expect_true("-- GB scanned (dry-run estimate): 12.3" %in% billed)
+
+  no_estimate <- sql_sidecar_text(list(sql = "SELECT 1", run_at = meta$run_at,
+                                       gb_billed = 1), 5, "a.csv")
+  expect_false(any(str_detect(no_estimate, "estimate")))
+  expect_true("-- GB billed: 1" %in% no_estimate)
+})
+
 test_that("stored results keep their SQL and run details until dropped", {
   run_at <- Sys.time()
   first <- store_result(tibble(x = 1), sql = "SELECT 1 AS x", run_at = run_at,
                         gb_billed = 0.5, max_results = 2)
   expect_equal(get_result_meta(first),
-               list(sql = "SELECT 1 AS x", run_at = run_at, gb_billed = 0.5))
+               list(sql = "SELECT 1 AS x", run_at = run_at, gb_billed = 0.5,
+                    estimate_bytes = NULL, cache_hit = FALSE))
+  cached <- store_result(tibble(x = 1), sql = "SELECT 1 AS x", gb_billed = 0,
+                         estimate_bytes = 12.3e9, cache_hit = TRUE)
+  expect_equal(get_result_meta(cached)$estimate_bytes, 12.3e9)
+  expect_true(get_result_meta(cached)$cache_hit)
   store_result(tibble(x = 2), sql = "SELECT 2 AS x", max_results = 2)
   store_result(tibble(x = 3), sql = "SELECT 3 AS x", max_results = 2)
   expect_null(get_result_meta(first))
@@ -816,6 +843,7 @@ test_that("run and export messages say the result is stored in the server", {
     list(
       result = tibble(year = 2024:2025, n = c(3L, 5L)),
       cache_hit = FALSE,
+      estimate_bytes = 1e7,
       billing_note = "BigQuery billed 0.01 GB for this run.",
       run_at = Sys.time(),
       gb_billed = 0.01
@@ -839,6 +867,8 @@ test_that("run and export messages say the result is stored in the server", {
   out <- fromJSON(orion_export_bq_query(sql, "stored_note.csv"),
                   simplifyVector = FALSE)
   expect_true(file.exists(out$path))
+  expect_match(read_file(out$sql_path), "-- GB scanned (dry-run estimate): 0.01",
+               fixed = TRUE)
   expect_match(out$message, "orion-mcp server", fixed = TRUE)
   expect_no_match(out$message, "R session", fixed = TRUE)
 })
